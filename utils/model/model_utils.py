@@ -10,7 +10,12 @@ from transformers import (
     AutoModel,
 )
 from huggingface_hub import snapshot_download
-from transformers.deepspeed import HfDeepSpeedConfig
+# from transformers.integrations.deepspeed import HfDeepSpeedConfig
+# check if HfDeepSpeedConfig is available
+try:
+    from transformers.integrations.deepspeed import HfDeepSpeedConfig
+except ImportError:
+    from transformers.deepspeed import HfDeepSpeedConfig
 from transformers import LlamaForCausalLM, LlamaConfig
 
 

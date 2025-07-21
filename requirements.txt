@@ -29,7 +29,6 @@ rouge==1.0.1
 fuzzywuzzy
 quadprog
 peft
-rouge
 qpth
 sacrebleu
 sacremoses
