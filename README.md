@@ -23,7 +23,7 @@ To install other packages, run
 pip install -r requirements.txt
 ```
 
-To use flash attention, install **flas_attn**
+To use flash attention, install **flash_attn**
 
 
 ## data preproceess
