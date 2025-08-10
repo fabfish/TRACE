@@ -19,6 +19,7 @@ import warnings
 from contextlib import contextmanager
 
 import torch
+import torch_npu
 from accelerate import dispatch_model, infer_auto_device_map
 from accelerate.hooks import AlignDevicesHook, add_hook_to_module, remove_hook_from_submodules
 from accelerate.utils import get_balanced_memory

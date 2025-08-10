@@ -6,6 +6,7 @@ from tqdm import tqdm
 import json
 
 import torch
+import torch_npu
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 
@@ -148,7 +149,7 @@ def main():
     if args.local_rank == -1:
         device = torch.device("cuda")
     else:
-        torch.cuda.set_device(args.local_rank)
+        torch_npu.npu.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         # torch.distributed.init_process_group(backend='nccl')

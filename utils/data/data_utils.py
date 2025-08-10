@@ -289,8 +289,8 @@ def create_prompt_dataset(local_rank,
                           reload=False,
                           add_sys_prefix=False,
                           for_backbone=False,
-                        #   distributed=True,
-                            distributed=False,
+                          distributed=True,
+                          # distributed=False,
                           sample_ratio=None
                           ):
     """
@@ -301,6 +301,7 @@ def create_prompt_dataset(local_rank,
     # 为什么单独要 sft data？
     fname = f"{fname}_seed{seed}"
     fname = "_".join(fname.split("/"))
+    # print("fname:", fname)
     fname = hashlib.sha256(fname.encode()).hexdigest(
     )  # hash the file name to avoid too long file name
     train_fname = f"{output_path}/traindata_{fname}.pt"
@@ -319,6 +320,10 @@ def create_prompt_dataset(local_rank,
             local_rank, data_path, output_path,
             seed, add_sys_prefix=add_sys_prefix, for_backbone=for_backbone, sample_ratio=sample_ratio)
 
+    if distributed:
+        torch.distributed.barrier()
+
+    if local_rank <= 0:
         # torch.save的数据格式可以是任意的
         # 提前准备好，可以加速预处理，torch.load 速度也会比较快
         torch.save(train_dataset, train_fname)
@@ -327,4 +332,5 @@ def create_prompt_dataset(local_rank,
 
     if distributed:
         torch.distributed.barrier()
+
     return torch.load(train_fname), torch.load(eval_fname), torch.load(test_fname)

@@ -5,6 +5,7 @@ sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 from datasets import load_dataset
 import torch
+import torch_npu
 import torch.utils.data as Data
 import random
 from tqdm import tqdm
@@ -177,7 +178,7 @@ def main():
     if args.local_rank == -1:
         device = torch.device("cuda")
     else:
-        torch.cuda.set_device(args.local_rank)
+        torch_npu.npu.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         # torch.distributed.init_process_group(backend='nccl')

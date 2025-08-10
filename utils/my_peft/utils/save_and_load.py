@@ -15,6 +15,7 @@
 
 from .config import PeftType, PromptLearningConfig
 import torch
+import torch_npu
 import torch.nn as nn
 import math
 

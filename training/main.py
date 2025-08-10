@@ -13,6 +13,7 @@ import sys
 from tqdm import tqdm
 
 import torch
+import torch_npu
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 
@@ -41,11 +42,11 @@ from utils.module.lora import convert_linear_layer_to_lora, convert_lora_to_line
 from utils.model.model_utils import create_hf_model
 
 # add flash attention
-from utils.flash_attention.llama_flash_att import replace_llama_attn_with_flash_attn
-from utils.flash_attention.bloom_flash_att import replace_bloom_attn_with_flash_attn
+# from utils.flash_attention.llama_flash_att import replace_llama_attn_with_flash_attn
+# from utils.flash_attention.bloom_flash_att import replace_bloom_attn_with_flash_attn
 
-replace_llama_attn_with_flash_attn()
-replace_bloom_attn_with_flash_attn()
+# replace_llama_attn_with_flash_attn()
+# replace_bloom_attn_with_flash_attn()
 
 # my_peft中修改了lora相关的逻辑
 from model.Replay.LFPT5 import getInitialPrompt
@@ -208,7 +209,7 @@ def main():
     if args.local_rank == -1:
         device = torch.device("cuda")
     else:
-        torch.cuda.set_device(args.local_rank)
+        torch_npu.npu.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         # torch.distributed.init_process_group(backend='nccl')
@@ -305,6 +306,12 @@ def main():
         Datasets = args.dataset_name
     for dataset in Datasets:
         dataset_path = os.path.join(args.data_path,dataset)
+
+        # zy: test
+        print_rank_0(f"Loading dataset from {dataset_path}", args.global_rank)
+        print_rank_0(f"Training examples number: {len(os.listdir(dataset_path))}", args.global_rank)
+        torch.distributed.barrier()
+
         # Prepare the data
         train_dataset, eval_dataset, test_dataset = create_prompt_dataset(
             args.local_rank,

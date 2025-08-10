@@ -1,4 +1,5 @@
 import torch
+import torch_npu
 from torch.nn.utils.convert_parameters import _check_param_device, parameters_to_vector, vector_to_parameters
 import torch.nn as nn
 from tqdm.auto import tqdm

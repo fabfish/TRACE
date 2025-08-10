@@ -1,4 +1,5 @@
 import torch
+import torch_npu
 import torch.nn as nn
 import transformers
 import numpy as np

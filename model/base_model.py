@@ -1,10 +1,11 @@
 import torch
+import torch_npu
 from utils.utils import print_rank_0, to_device, save_hf_format, set_random_seed, get_all_reduce_mean, get_optimizer_grouped_parameters, save_zero_three_model, load_hf_tokenizer
 from utils.data.data_utils import create_prompt_dataset
 from utils.data.data_collator import DataCollator
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm
-import torch
+
 import torch.distributed as dist
 import torch.nn.functional as F
 import json
@@ -64,10 +65,12 @@ class CL_Base_Model:
     def train_one_task(self, task, i_task, epochs):
         # 在单独某个任务上训练
         if self.args.local_rank == -1:
-            device = torch.device("cuda")
+            # device = torch.device("cuda")
+            device = torch.device("npu")
         else:
-            torch.cuda.set_device(self.args.local_rank)
-            device = torch.device("cuda", self.args.local_rank)
+            torch_npu.npu.set_device(self.args.local_rank)
+            # device = torch.device("cuda", self.args.local_rank)
+            device = torch.device("npu", self.args.local_rank)
         
         #### TRAIN ####
         train_dataloader = self.train_task_list[task]

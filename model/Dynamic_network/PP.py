@@ -1,4 +1,5 @@
 import torch
+import torch_npu
 from torch import nn
 import pandas as pd
 import numpy as np

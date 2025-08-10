@@ -1,5 +1,6 @@
 import logging
 import torch
+import torch_npu
 from transformers.data.data_collator import *
 from inference.ICL import TASK_PROMT, Constrained_PROMPT
 

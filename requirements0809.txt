@@ -1,0 +1,70 @@
+absl-py==2.3.1
+anaconda-anon-usage @ file:///croot/anaconda-anon-usage_1749054781012/work
+annotated-types @ file:///croot/annotated-types_1709542913801/work
+archspec @ file:///croot/archspec_1709217642129/work
+attrs==25.3.0
+beautifulsoup4==4.13.4
+boltons @ file:///croot/boltons_1751383734872/work
+brotlicffi @ file:///croot/brotlicffi_1736182468590/work
+bs4==0.0.2
+certifi @ file:///croot/certifi_1752653708734/work/certifi
+cffi @ file:///croot/cffi_1736182496610/work
+charset-normalizer @ file:///croot/charset-normalizer_1721748349566/work
+click==8.2.1
+cloudpickle==3.1.1
+conda @ file:///croot/conda_1749171262198/work/conda-src
+conda-anaconda-telemetry @ file:///croot/conda-anaconda-telemetry_1751062006695/work
+conda-anaconda-tos @ file:///croot/conda-anaconda-tos_1753220184391/work
+conda-content-trust @ file:///croot/conda-content-trust_1714483161628/work
+conda-libmamba-solver @ file:///croot/conda-libmamba-solver_1745607008911/work/src
+conda-package-handling @ file:///croot/conda-package-handling_1731369021572/work
+conda_package_streaming @ file:///croot/conda-package-streaming_1751307508976/work
+cryptography @ file:///croot/cryptography_1753084578537/work
+decorator==5.2.1
+distro @ file:///croot/distro_1714488260977/work
+filelock==3.18.0
+frozendict @ file:///croot/frozendict_1713194831395/work
+fsspec==2025.7.0
+getopts==1.0.5
+google==3.0.0
+idna @ file:///croot/idna_1714398854369/work
+Jinja2==3.1.6
+jsonpatch @ file:///croot/jsonpatch_1714483236687/work
+jsonpointer==2.1
+libmambapy @ file:///croot/mamba-split_1734469473285/work/libmambapy
+markdown-it-py @ file:///croot/markdown-it-py_1684279907449/work
+MarkupSafe==3.0.2
+mdurl @ file:///ci_py311/mdurl_1676655548083/work
+menuinst @ file:///croot/menuinst_1753464589852/work
+ml_dtypes==0.5.1
+mpmath==1.3.0
+networkx==3.5
+numpy==1.24.0
+packaging @ file:///croot/packaging_1734472115061/work
+platformdirs @ file:///croot/platformdirs_1744273047827/work
+pluggy @ file:///croot/pluggy_1733169620750/work
+psutil==7.0.0
+pycosat @ file:///croot/pycosat_1736868411880/work
+pycparser @ file:///tmp/build/80754af9/pycparser_1636541352034/work
+pydantic @ file:///croot/pydantic_1750768273517/work
+pydantic_core @ file:///croot/pydantic-core_1750754738270/work
+Pygments @ file:///croot/pygments_1744664115646/work
+pyinspect==0.1.0
+PySocks @ file:///ci_py311/pysocks_1676652194152/work
+PyYAML==6.0.2
+requests @ file:///croot/requests_1750426335554/work
+rich @ file:///croot/rich_1732638988216/work
+ruamel.yaml @ file:///croot/ruamel.yaml_1745960308213/work
+ruamel.yaml.clib @ file:///croot/ruamel.yaml.clib_1745937156736/work
+scipy==1.14.0
+soupsieve==2.7
+sympy==1.13.1
+torch==2.1.0
+torch-npu @ file:///home/HwHiAiUser/torch_npu-2.1.0.post13-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl#sha256=424ad1143349b417e411b6bc173be0c605000b01e3922553a97f3bbb31e2961a
+tornado==6.5.1
+tqdm @ file:///croot/tqdm_1738943461672/work
+truststore @ file:///croot/truststore_1736550128580/work
+typing-inspection @ file:///croot/typing-inspection_1746023477458/work
+typing_extensions @ file:///croot/typing_extensions_1734714855955/work
+urllib3 @ file:///croot/urllib3_1750775465825/work
+zstandard @ file:///croot/zstandard_1731356343166/work

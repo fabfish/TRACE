@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 import torch
+import torch_npu
 import torch.nn as nn
 import torch.nn.functional as F
 

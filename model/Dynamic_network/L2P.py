@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 import torch
+import torch_npu
 import torch.utils.data
 from tqdm.auto import tqdm
 from torch import nn
@@ -181,7 +182,7 @@ class L2P(CL_Base_Model):
         if self.args.local_rank == -1:
             device = torch.device("cuda")
         else:
-            torch.cuda.set_device(self.args.local_rank)
+            torch_npu.npu.set_device(self.args.local_rank)
             device = torch.device("cuda", self.args.local_rank)
 
         infer_dataloader = self.test_task_list[task]

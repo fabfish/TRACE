@@ -1,5 +1,6 @@
 import logging
 import torch
+import torch_npu
 from transformers.data.data_collator import *
 
 logger = logging.getLogger(__name__)

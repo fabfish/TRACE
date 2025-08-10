@@ -4,6 +4,7 @@
 # DeepSpeed Team
 import math
 import torch
+import torch_npu
 from torch import nn
 import torch.nn.functional as F
 from deepspeed.compression.helper import recursive_getattr, recursive_setattr

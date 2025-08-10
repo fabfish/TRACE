@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch_npu
 import quadprog
 import random
 from tqdm.auto import tqdm

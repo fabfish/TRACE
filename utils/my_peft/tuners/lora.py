@@ -20,6 +20,7 @@ from enum import Enum
 from typing import List, Optional, Union
 
 import torch
+import torch_npu
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers.pytorch_utils import Conv1D

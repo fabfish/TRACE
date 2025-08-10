@@ -5,6 +5,7 @@
 import os
 import math
 import torch
+import torch_npu
 from transformers import (
     AutoConfig,
     AutoModel,

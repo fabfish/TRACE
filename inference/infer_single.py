@@ -21,6 +21,7 @@ from tqdm import tqdm
 import pandas as pd
 
 import torch
+import torch_npu
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist

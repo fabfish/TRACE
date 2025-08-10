@@ -1,6 +1,7 @@
 import os
 import time
 import torch
+import torch_npu
 import pickle
 import random
 from tqdm import tqdm
@@ -53,7 +54,7 @@ class LFPT5(CL_Base_Model):
         if self.args.local_rank == -1:
             self.device = torch.device("cuda")
         else:
-            torch.cuda.set_device(self.args.local_rank)
+            torch_npu.npu.set_device(self.args.local_rank)
             self.device = torch.device("cuda", self.args.local_rank)
 
 

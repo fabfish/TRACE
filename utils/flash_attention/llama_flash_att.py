@@ -1,6 +1,7 @@
 from typing import List, Optional, Tuple
 
 import torch
+import torch_npu
 from torch import nn
 
 import transformers

@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 import torch
+import torch_npu
 from torch.autograd import Variable
 import torch.utils.data
 from tqdm.auto import tqdm

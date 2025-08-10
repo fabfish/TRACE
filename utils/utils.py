@@ -4,6 +4,7 @@
 # DeepSpeed Team
 import os
 import torch
+import torch_npu
 import random
 import numpy as np
 from transformers import set_seed, AutoTokenizer
