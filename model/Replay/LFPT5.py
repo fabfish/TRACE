@@ -52,10 +52,10 @@ class LFPT5(CL_Base_Model):
         2. pseudo data generation
         '''
         if self.args.local_rank == -1:
-            self.device = torch.device("cuda")
+            self.device = torch.device("npu")
         else:
             torch_npu.npu.set_device(self.args.local_rank)
-            self.device = torch.device("cuda", self.args.local_rank)
+            self.device = torch.device("npu", self.args.local_rank)
 
 
     def get_dataloader(self, task, pseudo_prompts, pseudo_answers):

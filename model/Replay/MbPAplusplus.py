@@ -79,7 +79,7 @@ class ReplayMemory(object):
         """
         samples = []
         self.all_keys = list(self.memory.keys()) #[len(keys),hidden_size]
-        self.all_keys = torch.stack(self.all_keys,dim=0).to("cuda")  # [len(keys),hidden_size]
+        self.all_keys = torch.stack(self.all_keys,dim=0).to("npu")  # [len(keys),hidden_size]
 
         # Iterate over all the input keys
         # to find neigbours for each of them
@@ -161,9 +161,9 @@ class MbPAplusplus(CL_Base_Model):
                     
                     for i in range(self.replay_size):
                     
-                        input_ids = S_input_ids[i].unsqueeze(0).to("cuda")
-                        attn_masks = S_attn_masks[i].unsqueeze(0).to("cuda")
-                        labels = S_labels[i].unsqueeze(0).to("cuda")
+                        input_ids = S_input_ids[i].unsqueeze(0).to("npu")
+                        attn_masks = S_attn_masks[i].unsqueeze(0).to("npu")
+                        labels = S_labels[i].unsqueeze(0).to("npu")
 
                         outputs = self.model(input_ids=input_ids, labels=labels, attention_mask=attn_masks, use_cache=False)
                         loss = outputs.loss
@@ -213,7 +213,7 @@ class MbPAplusplus(CL_Base_Model):
                 R_loss = R_outputs.loss
                 # Initialize diff_loss to zero and place it on the appropriate device
                 diff_loss = torch.Tensor([0]).to(
-                    "cuda" if torch.cuda.is_available() else "cpu")
+                    "npu" if torch.cuda.is_available() else "cpu")
                 # Iterate over base_weights and curr_weights and accumulate the euclidean norm
                 # of their differences
                 curr_weights = list(self.model.parameters())
@@ -240,7 +240,7 @@ class MbPAplusplus(CL_Base_Model):
         
     
     def evaluate(self, round):
-        device = "cuda"
+        device = "npu"
         def prediction(model, infer_dataloader):
             predicted_sequences = []
             sources_sequences = []
@@ -274,9 +274,9 @@ class MbPAplusplus(CL_Base_Model):
                         base_weights.append(copy.deepcopy(p))
                     del p
 
-                    rt_input_ids = [r_input_ids.to("cuda") for r_input_ids in rt_input_ids]
-                    rt_attn_masks = [r_attn_masks.to("cuda") for r_attn_masks in rt_attn_masks]
-                    rt_labels = [r_labels.to("cuda") for r_labels in rt_labels]
+                    rt_input_ids = [r_input_ids.to("npu") for r_input_ids in rt_input_ids]
+                    rt_attn_masks = [r_attn_masks.to("npu") for r_attn_masks in rt_attn_masks]
+                    rt_labels = [r_labels.to("npu") for r_labels in rt_labels]
                     self.replay_with_neighbors(rt_input_ids, rt_attn_masks, rt_labels, base_weights)
                     
                     del rt_input_ids

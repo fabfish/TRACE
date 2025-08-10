@@ -371,7 +371,7 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
                 )
 
         adapters_weights = torch.load(
-            filename, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            filename, map_location=torch.device("npu" if torch.cuda.is_available() else "cpu")
         )
         # load the weights into the model
         set_peft_model_state_dict(self, adapters_weights, adapter_name=adapter_name)

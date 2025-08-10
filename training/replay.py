@@ -213,10 +213,10 @@ def main():
     args = parse_args()
 
     if args.local_rank == -1:
-        device = torch.device("cuda")
+        device = torch.device("npu")
     else:
         torch_npu.npu.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
+        device = torch.device("npu", args.local_rank)
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         # torch.distributed.init_process_group(backend='nccl')
         deepspeed.init_distributed()
@@ -430,10 +430,10 @@ def main():
                                     sampler=replay_sampler,
                                     batch_size=args.per_device_train_batch_size)
         if args.local_rank == -1:
-            device = torch.device("cuda")
+            device = torch.device("npu")
         else:
             torch_npu.npu.set_device(args.local_rank)
-            device = torch.device("cuda", args.local_rank)
+            device = torch.device("npu", args.local_rank)
         
         #### TRAIN ####
         print("Replaying....................................")

@@ -65,11 +65,11 @@ class CL_Base_Model:
     def train_one_task(self, task, i_task, epochs):
         # 在单独某个任务上训练
         if self.args.local_rank == -1:
-            # device = torch.device("cuda")
+            # device = torch.device("npu")
             device = torch.device("npu")
         else:
             torch_npu.npu.set_device(self.args.local_rank)
-            # device = torch.device("cuda", self.args.local_rank)
+            # device = torch.device("npu", self.args.local_rank)
             device = torch.device("npu", self.args.local_rank)
         
         #### TRAIN ####

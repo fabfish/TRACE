@@ -153,7 +153,7 @@ def parse_args():
 def main():
     args = parse_args()
     set_random_seed(args.seed)
-    device = torch.device("cuda")
+    device = torch.device("npu")
 
 
     def prediction(model, infer_dataloader):

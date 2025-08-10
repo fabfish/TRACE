@@ -144,7 +144,7 @@ class PP(CL_Base_Model):
 
 
         if torch.cuda.is_available():
-            self.device = torch.device("cuda")
+            self.device = torch.device("npu")
         else:
             self.device = torch.device("cpu")
         # Freezing model weights for prompt tuning
@@ -215,7 +215,7 @@ class PP(CL_Base_Model):
                                           inputs_embeds], axis=1)
             full_prefix_len = prompt.shape[0]
             
-        source_mask_updated = torch.concat((torch.tensor(1).to("cuda").repeat(k,full_prefix_len),
+        source_mask_updated = torch.concat((torch.tensor(1).to("npu").repeat(k,full_prefix_len),
                                              batch["attention_mask"]), axis=1)
 
         lm_labels = torch.concat((lm_labels[0][0].repeat(k,inputs_embeds.shape[1]-lm_labels.shape[1]),lm_labels),axis=1)

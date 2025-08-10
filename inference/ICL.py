@@ -79,7 +79,7 @@ class API:
         self.model=LlamaForCausalLM.from_pretrained(self.path,device_map="auto")
 
     def api(self,prompt):
-        inputs = self.tokenizer(prompt, return_tensors="pt", padding=True).to("cuda")
+        inputs = self.tokenizer(prompt, return_tensors="pt", padding=True).to("npu")
         # Generate
         outputs = self.model.generate(inputs.input_ids, max_length=2048, use_cache=True)
         # return self.tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
@@ -176,10 +176,10 @@ def main():
     world_size = int(os.getenv('WORLD_SIZE', '1'))
 
     if args.local_rank == -1:
-        device = torch.device("cuda")
+        device = torch.device("npu")
     else:
         torch_npu.npu.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
+        device = torch.device("npu", args.local_rank)
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         # torch.distributed.init_process_group(backend='nccl')
         deepspeed.init_distributed()

@@ -38,7 +38,7 @@ def convert_L2P_model(model, args):
         return prompt_weigths
     # prompt_pool_shape = (args.pool_size, args.prompt_length, args.embed_tokens_dim)
     # if args.prompt_init == 'zero':
-    #     model.model.prompt = nn.Parameter(torch.zeros(prompt_pool_shape, dtype=torch.bfloat16,requires_grad=True)).to("cuda")
+    #     model.model.prompt = nn.Parameter(torch.zeros(prompt_pool_shape, dtype=torch.bfloat16,requires_grad=True)).to("npu")
     if args.prompt_init == 'uniform':
         model.model.prompt = nn.Parameter(torch.tensor(init_new_prompt(args.pool_size , args.prompt_length),requires_grad=True))
             
@@ -95,7 +95,7 @@ class L2P(CL_Base_Model):
         else:
             raise NotImplementedError("Not supported way of calculating embedding keys!")
 
-        prompt_norm = self.l2_normalize(self.prompt_key, dim=1).to("cuda") # Pool_size, C
+        prompt_norm = self.l2_normalize(self.prompt_key, dim=1).to("npu") # Pool_size, C
         inputs_embeds_norm = self.l2_normalize(inputs_embeds_mean, dim=1) # B, C
 
         similarity = torch.matmul(inputs_embeds_norm, prompt_norm.t()) # B, Pool_size
@@ -123,7 +123,7 @@ class L2P(CL_Base_Model):
         inputs_embeds = torch.cat([batched_prompt, inputs_embeds],axis=1)
         
         prefix_length = batched_prompt.shape[1]
-        attn_masks = torch.concat((torch.tensor(1).to("cuda").repeat(batch_size,prefix_length),attn_masks), axis=1)
+        attn_masks = torch.concat((torch.tensor(1).to("npu").repeat(batch_size,prefix_length),attn_masks), axis=1)
         labels = torch.concat((labels[0][0].repeat(batch_size,inputs_embeds.shape[1]-labels.shape[1]),labels),axis=1)
         outputs = self.model(inputs_embeds=inputs_embeds, labels=labels, attention_mask=attn_masks, use_cache=False)
         loss = outputs[0]
@@ -180,10 +180,10 @@ class L2P(CL_Base_Model):
         
     def evaluate_one_task(self, round, infer_task_id, task):
         if self.args.local_rank == -1:
-            device = torch.device("cuda")
+            device = torch.device("npu")
         else:
             torch_npu.npu.set_device(self.args.local_rank)
-            device = torch.device("cuda", self.args.local_rank)
+            device = torch.device("npu", self.args.local_rank)
 
         infer_dataloader = self.test_task_list[task]
 
@@ -222,7 +222,7 @@ class L2P(CL_Base_Model):
                     if self.embedding_key == 'mean':
                         inputs_embeds_mean = torch.mean(inputs_embeds, dim=1)
 
-                    prompt_norm = self.l2_normalize(self.prompt_key, dim=1).to("cuda") # Pool_size, C
+                    prompt_norm = self.l2_normalize(self.prompt_key, dim=1).to("npu") # Pool_size, C
                     inputs_embeds_norm = self.l2_normalize(inputs_embeds_mean, dim=1) # B, C
 
                     similarity = torch.matmul(inputs_embeds_norm, prompt_norm.t()) # B, Pool_size
@@ -236,7 +236,7 @@ class L2P(CL_Base_Model):
                     inputs_embeds = torch.cat([batched_prompt, inputs_embeds],axis=1)
                     
                     prefix_length = batched_prompt.shape[1]
-                    attn_masks = torch.concat((torch.tensor(1).to("cuda").repeat(batch_size,prefix_length),attn_masks), axis=1)                    
+                    attn_masks = torch.concat((torch.tensor(1).to("npu").repeat(batch_size,prefix_length),attn_masks), axis=1)                    
                     
                     generate_ids = model.generate(inputs_embeds=inputs_embeds,
                                                   attention_mask=attn_masks,

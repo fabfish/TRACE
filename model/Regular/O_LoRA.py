@@ -22,10 +22,10 @@ class O_LoRA(CL_Base_Model):
         self.lamda_2 = lamda_2
         
         if self.args.local_rank == -1:
-            self.device = torch.device("cuda")
+            self.device = torch.device("npu")
         else:
             torch_npu.npu.set_device(self.args.local_rank)
-            self.device = torch.device("cuda", self.args.local_rank)
+            self.device = torch.device("npu", self.args.local_rank)
 
 
     def train_one_task(self, task, i_task, epochs):
