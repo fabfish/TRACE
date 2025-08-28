@@ -46,7 +46,7 @@ class OGD(CL_Base_Model):
         self.cnt=len(self.grad_dims)
         self.max_memories = max_memories  #max memory for one task
         
-        self.cur_grads = torch.zeros(sum(self.grad_dims), dtype=torch.bfloat16).cuda()  #存储每个任务的梯度
+        self.cur_grads = torch.zeros(sum(self.grad_dims), dtype=torch.bfloat16).npu()  #存储每个任务的梯度
         n_params = sum(self.grad_dims)
         self.ogd_basis = torch.empty(n_params, 0, dtype=torch.bfloat16).to('cuda')
 

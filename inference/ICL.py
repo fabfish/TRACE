@@ -195,12 +195,12 @@ def main():
     def dist_results_gather(generate_ids, pad_token=-1):
         # (batch_size, seq_len)
         result = generate_ids  # Example tensor
-        local_batch_size = torch.tensor([result.size(0)], dtype=torch.int).cuda()
-        local_seq_len = torch.tensor([result.size(1)], dtype=torch.int).cuda()
+        local_batch_size = torch.tensor([result.size(0)], dtype=torch.int).npu()
+        local_seq_len = torch.tensor([result.size(1)], dtype=torch.int).npu()
 
         # 收集所有 GPUs 上的 batch_size 和 seq_len
-        global_batch_sizes = [torch.tensor([0], dtype=torch.int).cuda() for _ in range(dist.get_world_size())]
-        global_seq_len = [torch.tensor([0], dtype=torch.int).cuda() for _ in range(dist.get_world_size())]
+        global_batch_sizes = [torch.tensor([0], dtype=torch.int).npu() for _ in range(dist.get_world_size())]
+        global_seq_len = [torch.tensor([0], dtype=torch.int).npu() for _ in range(dist.get_world_size())]
         dist.all_gather(global_batch_sizes, local_batch_size)
         dist.all_gather(global_seq_len, local_seq_len)
 
@@ -210,10 +210,10 @@ def main():
         # left Pad 本地的 tensor 到 (_, max_seq_len)
         if result.size(1) < max_seq_len:
             pad_seq_len = (max_seq_len - result.size(1), 0)
-            result = F.pad(result, pad_seq_len, "constant", pad_token).cuda()
+            result = F.pad(result, pad_seq_len, "constant", pad_token).npu()
 
         # 使用 all_gather 收集所有 GPUs 上的 padded tensors
-        total_results = [torch.zeros((int(bs.item()), max_seq_len), dtype=result.dtype).cuda() for bs in global_batch_sizes]
+        total_results = [torch.zeros((int(bs.item()), max_seq_len), dtype=result.dtype).npu() for bs in global_batch_sizes]
         dist.all_gather(total_results, result)
 
         # Flatten total_results 来创建一个大的列表

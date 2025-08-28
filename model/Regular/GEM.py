@@ -63,9 +63,9 @@ class GEM(CL_Base_Model):
         # self.cnt-=1
         # # print(self.cnt)
 
-        # memories = self.grads[beg:end].cuda().index_select(1,indx)
+        # memories = self.grads[beg:end].npu().index_select(1,indx)
         
-        memories = self.grads[name].cuda().index_select(1,indx)
+        memories = self.grads[name].npu().index_select(1,indx)
         # dotp = torch.mm(self.grads[:, i_task].unsqueeze(0),
         #                         self.grads.index_select(1, indx))
         dotp = torch.mm(gradient.unsqueeze(0), memories)
@@ -90,14 +90,14 @@ class GEM(CL_Base_Model):
             t = memories_cuda.shape[0]
             # print("memories_cuda.shape:", memories_cuda.shape, " gradient_cuda.shape", gradient_cuda.shape, " t:", t)
             P = torch.matmul(memories_cuda, memories_cuda.t())
-            P = 0.5 * (P + P.t()) + torch.eye(t).cuda() * eps
+            P = 0.5 * (P + P.t()) + torch.eye(t).npu() * eps
             q = torch.matmul(memories_cuda, gradient_cuda) * -1
             
             P = P.to(torch.float32)
             q = q.to(torch.float32)
-            G = torch.eye(t).cuda()
-            h = torch.zeros(t).cuda() + margin
-            e = torch.Tensor().cuda()
+            G = torch.eye(t).npu()
+            h = torch.zeros(t).npu() + margin
+            e = torch.Tensor().npu()
             # print("P.type():", P.type(), " q.type():", q.type(), " G.type():", G.type(), " h.type():", h.type)
             v = QPFunction(verbose=False)(P, q, G, h, e, e)[0]
             v = v.to(torch.bfloat16)

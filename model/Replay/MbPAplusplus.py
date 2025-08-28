@@ -218,7 +218,7 @@ class MbPAplusplus(CL_Base_Model):
                 # of their differences
                 curr_weights = list(self.model.parameters())
                 for base_param, curr_param in zip(base_weights, curr_weights):
-                    diff_loss += (curr_param-base_param.cuda()).pow(2).sum()
+                    diff_loss += (curr_param-base_param.npu()).pow(2).sum()
 
                 # Total loss due to log likelihood and weight restraint
                 total_loss = 0.001*diff_loss + R_loss

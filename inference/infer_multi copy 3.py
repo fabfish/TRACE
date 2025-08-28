@@ -47,7 +47,7 @@ from utils.utils import print_rank_0, to_device, save_hf_format, set_random_seed
     get_optimizer_grouped_parameters, save_zero_three_model, load_hf_tokenizer
 from utils.ds_utils import get_train_ds_config
 from utils.model.model_utils import create_hf_model
-from evaluations import eval_ScienceQA, eval_MeetingBank, eval_PapyrusF, eval_CStance, eval_Py150, eval_FOMC, eval_NumGLUE_cm, eval_NumGLUE_ds, eval_20Minuten # to be continued
+from evaluations import eval_ScienceQA, eval_MeetingBank, eval_PapyrusF, eval_CStance, eval_Py150, eval_FOMC, eval_NumGLUE_cm, eval_NumGLUE_ds # to be continued
 from training.params import Method2Class, AllDatasetName
 
 from model.Replay.LFPT5 import getInitialPrompt
@@ -273,67 +273,6 @@ def main():
 
         return sources_sequences, predicted_sequences, label_sequences
 
-    def prediction(model, infer_dataloader):
-        predicted_sequences = []
-        sources_sequences = []
-        label_sequences = []
-        model.eval()
-
-        for step, batch in enumerate(infer_dataloader):
-            # 提取原始的 prompts 和 labels，但先不删除
-            original_sources = batch['sources']
-            original_gts = batch['gts']
-            
-            ground_truths_ids = tokenizer(original_gts, 
-                                            truncation=True,
-                                            max_length=args.max_ans_len,
-                                            add_special_tokens=False,
-                                            padding='max_length',
-                                            return_tensors='pt')['input_ids'].to(device)
-
-            del batch['gts']
-            del batch['sources']
-            batch = to_device(batch, device)
-            
-            # 关键步骤1：像单机版本一样，获取输入的长度
-            prompt_len = batch['input_ids'].shape[1]
-
-            if args.global_rank == 0:
-                progress_bar.update(1)
-                description = f"Step {step}"
-                progress_bar.set_description(description, refresh=False)
-
-            with torch.no_grad():
-                generate_ids = model.generate(input_ids=batch['input_ids'],
-                                            attention_mask=batch['attention_mask'],
-                                            max_new_tokens=args.max_ans_len,
-                                            bos_token_id=tokenizer.bos_token_id,
-                                            eos_token_id=tokenizer.eos_token_id,
-                                            pad_token_id=tokenizer.unk_token_id, # 注意: 如果你的tokenizer有pad_token，最好用 tokenizer.pad_token_id
-                                            generation_config=generation_config,
-                                            use_cache=True
-                                            )
-
-            # 关键步骤2：在分布式收集之前，就分离出答案部分
-            # generate_ids 包含了 prompt, 我们只对答案部分感兴趣
-            result_ids = generate_ids[:, prompt_len:]
-
-            # 现在，我们只收集答案的 token 和原始输入的 token
-            gathered_prompt_ids, _ = dist_results_gather(batch['input_ids'], tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
-            gathered_result_ids, _ = dist_results_gather(result_ids, tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
-            gathered_labels, _ = dist_results_gather(ground_truths_ids, tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
-
-            if args.global_rank <= 0:
-                # 关键步骤3：在主进程上分别解码
-                sou_sequences = tokenizer.batch_decode(gathered_prompt_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                pre_sequences = tokenizer.batch_decode(gathered_result_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                lab_sequences = tokenizer.batch_decode(gathered_labels, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                
-                predicted_sequences.extend(pre_sequences)
-                sources_sequences.extend(sou_sequences)
-                label_sequences.extend(lab_sequences)
-
-        return sources_sequences, predicted_sequences, label_sequences
 
     def save_inference_results(evaluation_result: dict, sources_sequences: list, predicted_sequences: list,
                                 ground_truths: list, round: int, i_task: int, task: str):
@@ -508,8 +447,6 @@ def main():
                     evaluation_result = eval_NumGLUE_cm.eval(predicted_sequences, ground_truths)
                 elif dataset == "NumGLUE-ds":
                     evaluation_result = eval_NumGLUE_ds.eval(predicted_sequences, ground_truths)
-                elif dataset == "20Minuten":
-                    evaluation_result = eval_20Minuten.eval(sources_sequences, predicted_sequences, ground_truths)
                 else:
                     evaluation_result = {}
 

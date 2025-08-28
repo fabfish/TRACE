@@ -309,7 +309,7 @@ def create_prompt_dataset(local_rank,
     test_fname = f"{output_path}/testdata_{fname}.pt"
 
     cache_found = os.path.isfile(train_fname) and os.path.isfile(eval_fname)
-    # buf_create_cache = torch.ByteTensor([not cache_found]).cuda()
+    # buf_create_cache = torch.ByteTensor([not cache_found]).npu()
     # # 将不同进程的张量汇总sum
     # torch.distributed.all_reduce(buf_create_cache)
 

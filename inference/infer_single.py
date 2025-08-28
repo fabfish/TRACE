@@ -281,7 +281,8 @@ def main():
             model = PeftModel.from_pretrained(model, inference_model_path)
 
         if args.CL_method != "lora" and args.CL_method != "O-LoRA" and args.CL_method != "LFPT5": 
-            inference_model = torch.load(os.path.join(inference_model_path, "pytorch_model.bin"))
+            # inference_model = torch.load(os.path.join(inference_model_path, "pytorch_model.bin"))
+            inference_model = torch.load(os.path.join(inference_model_path, "pytorch_model.bin"), map_location='cpu')
             for name, param in model.named_parameters():
                 param.data.copy_(inference_model[name])
             del inference_model

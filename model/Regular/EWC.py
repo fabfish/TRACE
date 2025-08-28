@@ -38,7 +38,7 @@ class EWC(CL_Base_Model):
     def _update_fisher(self):
         for n, p in self.model.named_parameters():
             if n in self.grads.keys():
-                self.fisher[n].data += self.grads[n].cuda().data ** 2 / self.train_length
+                self.fisher[n].data += self.grads[n].npu().data ** 2 / self.train_length
     #正则化，除以训练集长度
     def _regular_fisher(self):
         for n, p in self.model.named_parameters():
@@ -56,7 +56,7 @@ class EWC(CL_Base_Model):
         precision_matrices = self.fisher
         for n, p in self.model.named_parameters():
             if p.requires_grad==True:
-                restrict_loss_params = precision_matrices[n] * (p - self._previous_params[n].cuda()) ** 2
+                restrict_loss_params = precision_matrices[n] * (p - self._previous_params[n].npu()) ** 2
                 restrict_loss += restrict_loss_params.sum()
         return restrict_loss
     
