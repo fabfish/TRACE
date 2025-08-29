@@ -156,48 +156,11 @@ def main():
     device = torch.device("npu")
 
 
-    def prediction(model, infer_dataloader, inference_task):
+    def prediction(model, infer_dataloader):
         predicted_sequences = []
         sources_sequences = []
         ground_truths = []
         model.eval()
-
-        if inference_task == "C-STANCE":
-            max_new_tokens = 20
-            temperature = 0.1
-            do_sample = False
-        elif inference_task == "FOMC":
-            max_new_tokens = 20
-            temperature = 0.1
-            do_sample = False
-        elif inference_task == "MeetingBank":
-            max_new_tokens = 150
-            temperature = 0.7
-            do_sample = True
-        elif inference_task == "ScienceQA":
-            max_new_tokens = 100
-            temperature = 0.5
-            do_sample = True
-        elif inference_task == "NumGLUE-cm":
-            max_new_tokens = 20
-            temperature = 0.1
-            do_sample = False
-        elif inference_task == "NumGLUE-ds":
-            max_new_tokens = 20
-            temperature = 0.1
-            do_sample = False
-        elif inference_task == "20Minuten":
-            max_new_tokens = 150
-            temperature = 0.7
-            do_sample = True
-        else:
-            max_new_tokens = args.max_ans_len
-            temperature = args.temperature
-            do_sample = True
-
-        # print model dtype
-        print(f"Model dtype: {next(model.parameters()).dtype}")
-
         for step, batch in enumerate(infer_dataloader):
             # TODO, add prompts, choosen, rejected
             # implementation, batch = {k: v.to(device) for k, v in batch.items()}
@@ -219,12 +182,12 @@ def main():
                 # sft config
                 generate_ids = model.generate(input_ids=batch['input_ids'],
                                               attention_mask=batch['attention_mask'],
-                                              max_new_tokens=max_new_tokens,
+                                              max_new_tokens=args.max_ans_len,
                                               bos_token_id=tokenizer.bos_token_id,
                                               eos_token_id=tokenizer.eos_token_id,
                                               pad_token_id=tokenizer.unk_token_id,
-                                              temperature=temperature,
-                                              do_sample=do_sample,
+                                              temperature=args.temperature,
+                                              do_sample=True,
                                               num_return_sequences=1,
                                               use_cache=True
                                               )
@@ -259,11 +222,10 @@ def main():
         print_rank_0("Inference Model Path: " + inference_model_path, args.local_rank)
 
         model = create_hf_model(AutoModelForCausalLM,
-                                # args.model_name_or_path,
-                                inference_model_path,
+                                args.model_name_or_path,
                                 tokenizer,
                                 ds_config=None,
-                                ).to(device)
+                                )
         
         # TODO: add adapters
         if args.CL_method == "LFPT5":
@@ -318,16 +280,16 @@ def main():
             from peft import PeftModel
             model = PeftModel.from_pretrained(model, inference_model_path)
 
-        # if args.CL_method != "lora" and args.CL_method != "O-LoRA" and args.CL_method != "LFPT5": 
-        #     # inference_model = torch.load(os.path.join(inference_model_path, "pytorch_model.bin"))
-        #     inference_model = torch.load(os.path.join(inference_model_path, "pytorch_model.bin"), map_location='cpu')
-        #     for name, param in model.named_parameters():
-        #         param.data.copy_(inference_model[name])
-        #     del inference_model
+        if args.CL_method != "lora" and args.CL_method != "O-LoRA" and args.CL_method != "LFPT5": 
+            # inference_model = torch.load(os.path.join(inference_model_path, "pytorch_model.bin"))
+            inference_model = torch.load(os.path.join(inference_model_path, "pytorch_model.bin"), map_location='cpu')
+            for name, param in model.named_parameters():
+                param.data.copy_(inference_model[name])
+            del inference_model
 
-        # # clean cache
+        # clean cache
         torch_npu.npu.empty_cache()
-        # model.to(device)
+        model.to(device)
 
         for inference_task_id in range(round+1):    # evaluation for previous tasks in a single round
             inference_task = inference_tasks[inference_task_id]
@@ -359,7 +321,7 @@ def main():
 
             # Inference !
             print_rank_0("***** Start inference *****", args.local_rank)
-            sources_sequences, predicted_sequences, ground_truths = prediction(model, infer_dataloader, inference_task)
+            sources_sequences, predicted_sequences, ground_truths = prediction(model, infer_dataloader)
             
             # Get Accuracy/ROUGE/BLEU/...
             # The evaluation result is stored in a dictionary. e.g. {"accuracy": .., "rouge-L": ..}

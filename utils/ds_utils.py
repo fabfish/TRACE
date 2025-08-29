@@ -82,7 +82,7 @@ def get_eval_ds_config(offload, stage=0):
         "steps_per_print": 10,
         "zero_optimization": zero_opt_dict,
         "bfloat16": {
-            "enabled": True
+            "enabled": "auto",
         },
         "gradient_clipping": 1.0,
         "prescale_gradients": False,

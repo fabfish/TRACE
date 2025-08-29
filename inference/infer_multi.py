@@ -254,7 +254,7 @@ def main():
                                             max_new_tokens=args.max_ans_len,
                                             bos_token_id=tokenizer.bos_token_id,
                                             eos_token_id=tokenizer.eos_token_id,
-                                            pad_token_id=tokenizer.unk_token_id,
+                                            pad_token_id=tokenizer.pad_token_id,
                                             generation_config=generation_config,
                                             use_cache=True
                                             )
@@ -309,7 +309,7 @@ def main():
                                             max_new_tokens=args.max_ans_len,
                                             bos_token_id=tokenizer.bos_token_id,
                                             eos_token_id=tokenizer.eos_token_id,
-                                            pad_token_id=tokenizer.unk_token_id, # 注意: 如果你的tokenizer有pad_token，最好用 tokenizer.pad_token_id
+                                            pad_token_id=tokenizer.pad_token_id, # 注意: 如果你的tokenizer有pad_token，最好用 tokenizer.pad_token_id
                                             generation_config=generation_config,
                                             use_cache=True
                                             )
@@ -441,7 +441,7 @@ def main():
         # del inference_model
         
         
-        ds_config = {
+        ds_checkpoint_config = {
             "type": "ds_model",
             "version": 0.0,
             "checkpoints": [os.path.join(inference_model_path, "pytorch_model.bin")],
@@ -449,7 +449,7 @@ def main():
 
         # replace_with_kernel_inject = False if "falcon" in args.model_name_or_path.lower() else True
         replace_with_kernel_inject = False
-        ds_engine = deepspeed.init_inference(model, mp_size=world_size, dtype=torch.bfloat16, checkpoint=ds_config,
+        ds_engine = deepspeed.init_inference(model, mp_size=world_size, dtype=torch.bfloat16, checkpoint=ds_checkpoint_config,
                                             replace_with_kernel_inject=replace_with_kernel_inject,
                                             max_out_tokens=args.max_prompt_len + args.max_ans_len)
         model = ds_engine.module
