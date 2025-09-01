@@ -19,7 +19,6 @@ import math
 import sys
 from tqdm import tqdm
 import pandas as pd
-import json
 
 import torch
 import torch_npu
@@ -27,7 +26,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 import deepspeed
-
+import json
 
 from transformers import (
     LlamaForCausalLM,
@@ -75,10 +74,6 @@ def parse_args():
                         type=str,
                         default='Dahoas/rm-static',
                         help='Path to the training dataset. A single data path.')
-    parser.add_argument('--dataset_name',
-                    type=list_of_strings,
-                    default='all',
-                    help='Dataset to be used.')
     parser.add_argument(
         '--data_output_path',
         type=str,
@@ -100,7 +95,6 @@ def parse_args():
         "Path to inference model.",
         required=True,
     )
-
     parser.add_argument(
         "--max_prompt_len",
         type=int,
@@ -126,7 +120,12 @@ def parse_args():
         default=4,
         help="Inference batch size.",
     )
-
+    parser.add_argument(
+        "--inference_tasks",
+        type=list_of_strings,
+        default='all',
+        help='Datasets to be used.'
+    )
     parser.add_argument("--output_dir",
                         type=str,
                         default=None,
@@ -185,11 +184,11 @@ def main():
     # only support bs = 1, cause right padding training logic
     # TODO, modify left pad for training and inference
     from transformers import GenerationConfig
-    generation_config = GenerationConfig(
-        temperature=args.temperature,
-        do_sample=True,
-        num_return_sequences=1
-    )
+    # generation_config = GenerationConfig(
+    #     temperature=args.temperature,
+    #     do_sample=True,
+    #     num_return_sequences=1
+    # )
     
     def dist_results_gather(generate_ids, pad_token=-1):
         # (batch_size, seq_len)
@@ -220,64 +219,55 @@ def main():
 
         return flat_results, max_seq_len
     
-    def prediction(model, infer_dataloader):
+
+
+    def prediction(model, infer_dataloader, inference_task=None):
         predicted_sequences = []
         sources_sequences = []
         label_sequences = []
         model.eval()
+        
+        if inference_task == "C-STANCE":
+            max_new_tokens = 20
+            temperature = 0.1
+            do_sample = False
+        elif inference_task == "FOMC":
+            max_new_tokens = 20
+            temperature = 0.1
+            do_sample = False
+        elif inference_task == "MeetingBank":
+            max_new_tokens = 150
+            temperature = 0.7
+            do_sample = True
+        elif inference_task == "ScienceQA":
+            max_new_tokens = 100
+            temperature = 0.5
+            do_sample = True
+        elif inference_task == "NumGLUE-cm":
+            max_new_tokens = 20
+            temperature = 0.1
+            do_sample = False
+        elif inference_task == "NumGLUE-ds":
+            max_new_tokens = 20
+            temperature = 0.1
+            do_sample = False
+        elif inference_task == "20Minuten":
+            max_new_tokens = 150
+            temperature = 0.7
+            do_sample = True
+        else:
+            max_new_tokens = args.max_ans_len
+            temperature = args.temperature
+            do_sample = True
 
-        for step, batch in enumerate(infer_dataloader):
-            ground_truths_ids = tokenizer(batch['gts'], 
-                                            truncation=True,
-                                            max_length=args.max_ans_len,
-                                            add_special_tokens=False,
-                                            padding='max_length',
-                                            return_tensors='pt')['input_ids'].to(device)
-            del batch['gts']
-            del batch['sources']
-            batch = to_device(batch, device)
-            # prompt_len = batch['input_ids'].shape[1]
-
-            # update progress bar
-            if args.global_rank == 0:
-                progress_bar.update(1)
-                description = f"Step {step}"
-                progress_bar.set_description(description, refresh=False)
-
-            # print(batch)
-            # print(tokenizer)
-
-            with torch.no_grad():
-                # sft config
-                generate_ids = model.generate(input_ids=batch['input_ids'],
-                                            attention_mask=batch['attention_mask'],
-                                            max_new_tokens=args.max_ans_len,
-                                            bos_token_id=tokenizer.bos_token_id,
-                                            eos_token_id=tokenizer.eos_token_id,
-                                            pad_token_id=tokenizer.pad_token_id,
-                                            generation_config=generation_config,
-                                            use_cache=True
-                                            )
-                
-            # add for distributed 
-            gathered_ids, max_seq_len = dist_results_gather(generate_ids, tokenizer.eos_token_id)
-            gathered_labels, max_label_len = dist_results_gather(ground_truths_ids, tokenizer.eos_token_id)
-
-            if args.global_rank <= 0:
-                sou_sequences = tokenizer.batch_decode(gathered_ids[:, : max_seq_len], skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                pre_sequences = tokenizer.batch_decode(gathered_ids[:, max_seq_len:], skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                lab_sequences = tokenizer.batch_decode(gathered_labels[:, : max_label_len], skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                predicted_sequences += pre_sequences
-                sources_sequences += sou_sequences
-                label_sequences += lab_sequences
-
-        return sources_sequences, predicted_sequences, label_sequences
-
-    def prediction(model, infer_dataloader):
-        predicted_sequences = []
-        sources_sequences = []
-        label_sequences = []
-        model.eval()
+        # print model dtype
+        print(f"Model dtype: {next(model.parameters()).dtype}")
+        generation_config = GenerationConfig(
+            temperature=temperature,
+            do_sample=do_sample,
+            num_return_sequences=1,
+            max_new_tokens=max_new_tokens,
+        )
 
         for step, batch in enumerate(infer_dataloader):
             # 提取原始的 prompts 和 labels，但先不删除
@@ -293,6 +283,7 @@ def main():
 
             del batch['gts']
             del batch['sources']
+
             batch = to_device(batch, device)
             
             # 关键步骤1：像单机版本一样，获取输入的长度
@@ -306,10 +297,12 @@ def main():
             with torch.no_grad():
                 generate_ids = model.generate(input_ids=batch['input_ids'],
                                             attention_mask=batch['attention_mask'],
-                                            max_new_tokens=args.max_ans_len,
+                                            max_new_tokens=max_new_tokens,
+                                            # max_new_tokens=args.max_ans_len,
+
                                             bos_token_id=tokenizer.bos_token_id,
                                             eos_token_id=tokenizer.eos_token_id,
-                                            pad_token_id=tokenizer.pad_token_id, # 注意: 如果你的tokenizer有pad_token，最好用 tokenizer.pad_token_id
+                                            pad_token_id=tokenizer.unk_token_id, 
                                             generation_config=generation_config,
                                             use_cache=True
                                             )
@@ -346,10 +339,10 @@ def main():
         with open(args.inference_output_path + "/results-" + str(round) + "-" + str(i_task) + "-" + task + ".json", "w+", encoding='utf-8') as file:
             json.dump(df, file, ensure_ascii=False)
     
-    if args.dataset_name[0] == "all":
+    if args.inference_tasks[0] == "all":
         Datasets = AllDatasetName
     else:
-        Datasets = args.dataset_name
+        Datasets = args.inference_tasks
         
     dataset_len = len(Datasets)
     
@@ -360,9 +353,12 @@ def main():
         # default the LLM is decoder only model, so padding side is left
         assert tokenizer.padding_side == 'left'
         assert tokenizer.truncation_side == "left"
+        inference_model_path = os.path.join(args.inference_model_path, str(round))
+        print_rank_0("Inference Model Path: " + inference_model_path, args.local_rank)
 
         model = create_hf_model(AutoModelForCausalLM,
-                                args.model_name_or_path,
+                                # args.model_name_or_path,
+                                inference_model_path,
                                 tokenizer,
                                 ds_config=None,
                                 )
@@ -449,14 +445,16 @@ def main():
 
         # replace_with_kernel_inject = False if "falcon" in args.model_name_or_path.lower() else True
         replace_with_kernel_inject = False
-        ds_engine = deepspeed.init_inference(model, mp_size=world_size, dtype=torch.bfloat16, checkpoint=ds_checkpoint_config,
+        ds_engine = deepspeed.init_inference(model, mp_size=world_size, dtype=torch.float32, checkpoint=ds_checkpoint_config,
                                             replace_with_kernel_inject=replace_with_kernel_inject,
-                                            max_out_tokens=args.max_prompt_len + args.max_ans_len)
+                                            # max_out_tokens=args.max_prompt_len + args.max_ans_len,
+                                            max_out_tokens=150,
+                                            )
         model = ds_engine.module
 
         for infer_task_id in range(round+1):
-            dataset = Datasets[infer_task_id]
-            dataset_path = os.path.join(args.data_path,dataset)
+            inference_task = Datasets[infer_task_id]
+            dataset_path = os.path.join(args.data_path,inference_task)
 
             # Prepare the data
             _, _, infer_dataset = create_prompt_dataset(
@@ -486,35 +484,35 @@ def main():
 
             # Inference !
             print_rank_0("***** Start inference *****", args.global_rank)
-            sources_sequences, predicted_sequences, ground_truths = prediction(model, infer_dataloader)
+            sources_sequences, predicted_sequences, ground_truths = prediction(model, infer_dataloader, inference_task)
 
             # Get Accuracy/ROUGE/BLEU/...
             # The evaluation result is stored in a dictionary. e.g. {"accuracy": .., "rouge-L": ..}
             if args.global_rank <= 0:
 
-                if dataset == "ScienceQA":
+                if inference_task == "ScienceQA":
                     evaluation_result = eval_ScienceQA.eval(predicted_sequences, ground_truths)
-                elif dataset == "MeetingBank":
+                elif inference_task == "MeetingBank":
                     evaluation_result = eval_MeetingBank.eval(predicted_sequences, ground_truths)
-                elif dataset == "C-STANCE":
+                elif inference_task == "C-STANCE":
                     evaluation_result = eval_CStance.eval(predicted_sequences, ground_truths)
-                elif dataset == "Papyrus-f":
+                elif inference_task == "Papyrus-f":
                     evaluation_result = eval_PapyrusF.eval(predicted_sequences, ground_truths)
-                elif dataset == "Py150":
+                elif inference_task == "Py150":
                     evaluation_result = eval_Py150.eval(predicted_sequences, ground_truths)
-                elif dataset == "FOMC":
+                elif inference_task == "FOMC":
                     evaluation_result = eval_FOMC.eval(predicted_sequences, ground_truths)
-                elif dataset == "NumGLUE-cm":
+                elif inference_task == "NumGLUE-cm":
                     evaluation_result = eval_NumGLUE_cm.eval(predicted_sequences, ground_truths)
-                elif dataset == "NumGLUE-ds":
+                elif inference_task == "NumGLUE-ds":
                     evaluation_result = eval_NumGLUE_ds.eval(predicted_sequences, ground_truths)
-                elif dataset == "20Minuten":
+                elif inference_task == "20Minuten":
                     evaluation_result = eval_20Minuten.eval(sources_sequences, predicted_sequences, ground_truths)
                 else:
                     evaluation_result = {}
 
                 print("***** Saving inference results *****")
-                save_inference_results(evaluation_result, sources_sequences, predicted_sequences, ground_truths, round, infer_task_id, dataset)
+                save_inference_results(evaluation_result, sources_sequences, predicted_sequences, ground_truths, round, infer_task_id, inference_task)
 
 if __name__ == "__main__":
     main()

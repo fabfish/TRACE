@@ -105,7 +105,6 @@ def parse_args():
         default=0.1,
         help="Generate temperature params.",
     )
-
     parser.add_argument(
         "--inference_batch",
         type=int,
@@ -156,7 +155,7 @@ def main():
     device = torch.device("npu")
 
 
-    def prediction(model, infer_dataloader, inference_task):
+    def prediction(model, infer_dataloader, inference_task=None):
         predicted_sequences = []
         sources_sequences = []
         ground_truths = []
@@ -203,8 +202,9 @@ def main():
             # implementation, batch = {k: v.to(device) for k, v in batch.items()}
             sources_sequences += batch['sources']
             ground_truths += batch['gts']
-            del batch['sources']
             del batch['gts']
+            del batch['sources']
+            
             batch = to_device(batch, device)
             prompt_len = batch['input_ids'].shape[1]
             # update progress bar
@@ -263,7 +263,7 @@ def main():
                                 inference_model_path,
                                 tokenizer,
                                 ds_config=None,
-                                ).to(device)
+                                )
         
         # TODO: add adapters
         if args.CL_method == "LFPT5":
