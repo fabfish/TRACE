@@ -129,3 +129,6 @@ If you use our work, please cite our paper:
 }
 ```
 
+usage
+
+bash scripts/infer_seq_multi.sh

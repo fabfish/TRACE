@@ -8,8 +8,9 @@ import numpy as np
 
 # --- 配置参数 ---
 # JSON 结果文件所在的目录
-ROOT_DIR = "/data/yuzhiyuan/outputs_LLM-CL/naive"
-RESULTS_DIR = os.path.join(ROOT_DIR, "predictions")
+ROOT_DIR = "/data/yuzhiyuan/outputs_LLM-CL/naive/predictions_"
+# RESULTS_DIR = os.path.join(ROOT_DIR, "predictions")
+RESULTS_DIR = ROOT_DIR
 # 输出图片的文件名
 # OUTPUT_IMAGE_FILE = "/data/yuzhiyuan/outputs_LLM-CL/naive_full/evaluation_matrix.png"
 OUTPUT_IMAGE_FILE = os.path.join(ROOT_DIR, "evaluation_matrix.png")
