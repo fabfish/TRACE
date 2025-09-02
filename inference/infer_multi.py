@@ -151,6 +151,12 @@ def parse_args():
             default=None,
             help='continual learning method used')
 
+    # decide generation config is fixed or variable
+    parser.add_argument('--fixed_generation_config',
+                        default=False,
+                        action='store_true',
+                        help='whether to use fixed generation config')
+
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
@@ -262,12 +268,21 @@ def main():
 
         # print model dtype
         print(f"Model dtype: {next(model.parameters()).dtype}")
+
         generation_config = GenerationConfig(
             temperature=temperature,
             do_sample=do_sample,
             num_return_sequences=1,
             max_new_tokens=max_new_tokens,
         )
+
+        if args.fixed_generation_config:
+            generation_config = GenerationConfig(
+                temperature=args.temperature,
+                do_sample=True,
+                num_return_sequences=1,
+                max_new_tokens=args.max_ans_len,
+            )
 
         for step, batch in enumerate(infer_dataloader):
             # 提取原始的 prompts 和 labels，但先不删除
