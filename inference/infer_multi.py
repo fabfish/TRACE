@@ -183,7 +183,7 @@ def main():
     # If passed along, set the training seed now.
     set_random_seed(args.seed)
     # Barrier to make sure all process are ready to train
-    # torch.distributed.barrier()
+    torch.distributed.barrier()
 
 
     # set evaluation batch size
@@ -202,29 +202,30 @@ def main():
         local_batch_size = torch.tensor([result.size(0)], dtype=torch.int).npu()
         local_seq_len = torch.tensor([result.size(1)], dtype=torch.int).npu()
 
-        # 收集所有 GPUs 上的 batch_size 和 seq_len
+        # Collect batch_size and seq_len from all GPUs
         global_batch_sizes = [torch.tensor([0], dtype=torch.int).npu() for _ in range(dist.get_world_size())]
         global_seq_len = [torch.tensor([0], dtype=torch.int).npu() for _ in range(dist.get_world_size())]
         dist.all_gather(global_batch_sizes, local_batch_size)
         dist.all_gather(global_seq_len, local_seq_len)
 
-        # 确定 max_seq_len
+        # Determine max_seq_len
         max_seq_len = max([int(seq_len.item()) for seq_len in global_seq_len])
 
-        # left Pad 本地的 tensor 到 (_, max_seq_len)
+        # Left pad the local tensor to (_, max_seq_len)
         if result.size(1) < max_seq_len:
             pad_seq_len = (max_seq_len - result.size(1), 0)
             result = F.pad(result, pad_seq_len, "constant", pad_token).npu()
 
-        # 使用 all_gather 收集所有 GPUs 上的 padded tensors
+        # Use all_gather to collect padded tensors from all GPUs
         total_results = [torch.zeros((int(bs.item()), max_seq_len), dtype=result.dtype).npu() for bs in global_batch_sizes]
-        dist.all_gather(total_results, result)
+        
+        # FIX: Ensure the tensor is contiguous before the all_gather operation
+        dist.all_gather(total_results, result.contiguous())
 
-        # Flatten total_results 来创建一个大的列表
+        # Flatten total_results to create a large list
         flat_results = torch.cat(total_results, dim=0)
 
         return flat_results, max_seq_len
-    
 
 
     def prediction(model, infer_dataloader, inference_task=None):
@@ -318,8 +319,10 @@ def main():
                                             bos_token_id=tokenizer.bos_token_id,
                                             eos_token_id=tokenizer.eos_token_id,
                                             pad_token_id=tokenizer.unk_token_id, 
+
                                             generation_config=generation_config,
                                             use_cache=True
+
                                             )
 
             # 关键步骤2：在分布式收集之前，就分离出答案部分
@@ -327,9 +330,23 @@ def main():
             result_ids = generate_ids[:, prompt_len:]
 
             # 现在，我们只收集答案的 token 和原始输入的 token
+
+            if args.global_rank <= 0:
+
+                # print(f"generate_ids shape: {generate_ids.shape}, batch input_idx shape: {batch['input_ids'].shape} result_ids shape: {result_ids.shape}, ground_truths_ids shape: {ground_truths_ids.shape}")
+                # try to print generate_ids? lets see the content.
+                print(f"generate_ids: {generate_ids}")
+
             gathered_prompt_ids, _ = dist_results_gather(batch['input_ids'], tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
             gathered_result_ids, _ = dist_results_gather(result_ids, tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
             gathered_labels, _ = dist_results_gather(ground_truths_ids, tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
+
+            # DEBUG = True
+            # DEBUG = False
+            # if DEBUG and args.global_rank <= 0:
+            #     # torch.distributed.barrier()
+            #     all_generate_ids, max_len = dist_results_gather(generate_ids, tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
+            #     print(f"all_generate_ids shape: {all_generate_ids.shape}, max_len: {max_len}")
 
             if args.global_rank <= 0:
                 # 关键步骤3：在主进程上分别解码

@@ -217,6 +217,7 @@ def main():
                 # generate_ids = model.generate(batch['input_ids'], max_new_tokens=args.max_ans_len,
                 #                               pad_token_id=tokenizer.eos_token_id, attention_mask = batch['attention_mask'], temperature=0.7, do_sample=True, repetition_penalty=2.0 )
                 # sft config
+
                 generate_ids = model.generate(input_ids=batch['input_ids'],
                                               attention_mask=batch['attention_mask'],
                                               max_new_tokens=max_new_tokens,
@@ -327,7 +328,7 @@ def main():
 
         # # clean cache
         torch_npu.npu.empty_cache()
-        # model.to(device)
+        model=model.to(device)
 
         for inference_task_id in range(round+1):    # evaluation for previous tasks in a single round
             inference_task = inference_tasks[inference_task_id]
@@ -389,10 +390,10 @@ def main():
             save_inference_results(evaluation_result, sources_sequences, predicted_sequences, ground_truths, round, inference_task_id, inference_task)
 
             print(f"--- Round {round} finished. Releasing memory. ---")
-            del model
-            torch_npu.npu.empty_cache()  # 因为你用的是NPU，所以用torch_npu
-            # 如果是NVIDIA GPU，则使用 torch.cuda.empty_cache()
-            # <<<<<<<<<<<< 添加代码结束 <<<<<<<<<<<<<<
+        del model
+        torch_npu.npu.empty_cache()  # 因为你用的是NPU，所以用torch_npu
+        # 如果是NVIDIA GPU，则使用 torch.cuda.empty_cache()
+        # <<<<<<<<<<<< 添加代码结束 <<<<<<<<<<<<<<
 
 if __name__ == "__main__":
     main()
