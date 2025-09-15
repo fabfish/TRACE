@@ -11,6 +11,7 @@ from copy import deepcopy
 from torch.optim import AdamW
 from model.base_model import CL_Base_Model
 
+from deepspeed.utils import safe_get_full_fp32_param
 
 class ResMLP(torch.nn.Module):
     def __init__(self, 
@@ -54,7 +55,8 @@ class ResMLP(torch.nn.Module):
             )
 
         elif module_type=='transformer':
-            device = 'cuda'
+            # device = 'cuda'
+            device = 'npu'
             self.encoder_layer = nn.TransformerEncoderLayer(d_model=emb_dimension, nhead=2, dropout=0.05).to(device)
             self.module = nn.TransformerEncoder(self.encoder_layer, num_layers=2).to(device)
 
@@ -143,10 +145,13 @@ class PP(CL_Base_Model):
         self.prefix_MLP = prefix_MLP
 
 
-        if torch.cuda.is_available():
-            self.device = torch.device("npu")
-        else:
-            self.device = torch.device("cpu")
+        # if torch.cuda.is_available():
+        #     self.device = torch.device("npu")
+        # else:
+        #     self.device = torch.device("cpu")
+
+        self.device = torch.device("npu")
+
         # Freezing model weights for prompt tuning
         if freeze_weights:
             print('Freezing weights')
@@ -156,7 +161,9 @@ class PP(CL_Base_Model):
         # Creating a trainable soft prompt
         if prefix_len>0:
             if prefix_path==None:
-                self.previous_prompts = torch.zeros([0, self.model.model.prompt.shape[1]],
+                # self.previous_prompts = torch.zeros([0, self.model.model.prompt.shape[1]],
+                self.previous_prompts = torch.zeros([0,
+                                                    safe_get_full_fp32_param(self.model.module.model.prompt).shape[1]],
                                                     requires_grad=False, dtype=torch.bfloat16).to(self.device)
             else: # initializing previous prompts from the path
                 print('Using pre-trained progressive prompt - ' + prefix_path)
@@ -301,7 +308,13 @@ class PP(CL_Base_Model):
         # model.model.to(self.device)
 
         dataloader_train = self.train_task_list[task]
-        total_steps = self.args.num_train_epochs * len(dataloader_train)
+        # total_steps = self.args.num_train_epochs * len(dataloader_train)
+        print('task_num = ', task_num)
+        total_steps = int(self.args.num_train_epochs[task_num]) * len(dataloader_train)
+
+        print('Total steps = ')
+        print(total_steps)
+
         progress_bar = tqdm(total=total_steps, leave=True, disable=(self.args.global_rank != 0))
 
         val_acc = []
@@ -314,7 +327,8 @@ class PP(CL_Base_Model):
 
             for step, batch in enumerate(tqdm(dataloader_train)):
                 del batch['sources']
-                batch = {k:batch[k].to('cuda') for k in batch}
+                # batch = {k:batch[k].to('cuda') for k in batch}
+                batch = {k:batch[k].to('npu') for k in batch}
                 if self.prefix_len>0: # prompt tuning
                     loss = self.train_step_lester(batch,
                                                   task=task if self.prefix_MLP!=None else None,

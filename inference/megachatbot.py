@@ -1,5 +1,10 @@
 # chat_interactive.py
 
+### USAGE:
+# python megachatbot.py --path /path/to/your/model --max_new_tokens 256
+# Example:
+# python megachatbot.py --path /data/yuzhiyuan/outputs_LLM-CL/naive_llama3_1B_full/7/ 
+
 import argparse
 import logging
 import torch
@@ -25,18 +30,68 @@ def parse_args():
 def setup_pipeline(path, device):
     """设置并返回一个transformers pipeline"""
     print(f"🚀 正在从 '{path}' 加载模型和tokenizer...")
-    try:
-        # 使用 AutoClass 自动识别并加载对应的模型和tokenizer，更具通用性
-        tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(
-            path,
-            torch_dtype=torch.bfloat16,  # 在NPU和现代GPU上，bfloat16性能和稳定性更佳
-            trust_remote_code=True
+    # try:
+    #     # 使用 AutoClass 自动识别并加载对应的模型和tokenizer，更具通用性
+    #     tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+    #     model = AutoModelForCausalLM.from_pretrained(
+    #         path,
+    #         # torch_dtype=torch.bfloat16,  # 在NPU和现代GPU上，bfloat16性能和稳定性更佳
+    #         torch_dtype=torch.float32,  # 在NPU和现代GPU上，bfloat16性能和稳定性更佳
+    #         trust_remote_code=True
+    #     )
+    # except Exception as e:
+    #     print(f"❌ 加载模型失败: {e}")
+    #     print("👉 请确保提供的路径正确，并且目录中包含所有必要的文件（如config.json, pytorch_model.bin等）。")
+    #     exit()
+
+    tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+    
+    # model = AutoModelForCausalLM.from_pretrained(
+    #         path,
+    #         # torch_dtype=torch.bfloat16,  # 在NPU和现代GPU上，bfloat16性能和稳定性更佳
+    #         torch_dtype=torch.float32,  # 在NPU和现代GPU上，bfloat16性能和稳定性更佳
+    #         trust_remote_code=True
+    #     )
+
+    from transformers import AutoConfig
+    model_config = AutoConfig.from_pretrained(path, trust_remote_code=True)
+    
+    # --- FIX for llama3.2 STARTS HERE ---
+    # Modify the config object BEFORE creating the model.
+    # Llama models use eos_token_id but sometimes generation configs expect end_token_id.
+    model_config.end_token_id = tokenizer.eos_token_id
+    
+    # Set pad_token_id to the same value as eos_token_id.
+    # This ensures it's an integer when GenerationConfig is created.
+    model_config.pad_token_id = tokenizer.pad_token_id if model_config.pad_token_id is not None else None
+    # --- FIX ENDS HERE ---
+
+    # Note: dschf is defined in function scope to avoid global effects
+    # https://huggingface.co/docs/transformers/main_classes/deepspeed#nontrainer-deepspeed-integration
+    # if ds_config is not None and ds_config["zero_optimization"]["stage"] == 3:
+    #     dschf = HfDeepSpeedConfig(ds_config)
+    # else:
+    #     dschf = None
+
+    # print(model_config)
+
+    model = AutoModelForCausalLM.from_pretrained(
+        path,
+        from_tf=bool(".ckpt" in path),
+        config=model_config,
+        trust_remote_code=True,
+        # torch_dtype=torch.float16,
         )
-    except Exception as e:
-        print(f"❌ 加载模型失败: {e}")
-        print("👉 请确保提供的路径正确，并且目录中包含所有必要的文件（如config.json, pytorch_model.bin等）。")
-        exit()
+
+    # # llama use eos_token_id but not end_token_id
+    # model.config.end_token_id = tokenizer.eos_token_id
+    # # compatible with OPT and llama2
+    # model.config.pad_token_id = model.config.eos_token_id
+    # model.resize_token_embeddings(int(8 * math.ceil(len(tokenizer) / 8.0)))  # make the vocab size multiple of 8
+    
+    import math
+    model.resize_token_embeddings(int(8 * math.ceil(len(tokenizer) / 8.0)))  # make the vocab size multiple of 8
+
 
     # 如果tokenizer没有pad_token，通常可以将其设置为eos_token
     if tokenizer.pad_token is None:
@@ -96,6 +151,9 @@ def main(args):
         
         # 2. 模型生成回复
         print("Bot: ...✍️")
+
+        # 输出 tokenzier 处理后的 tokens 数量
+        print(f"(提示词长度: {len(generator.tokenizer(full_prompt).input_ids)} tokens), max_new_tokens: {args.max_new_tokens}")
         response = generator(full_prompt, max_new_tokens=args.max_new_tokens)
         
         # 因为设置了 return_full_text=False，这里直接就是干净的新回复

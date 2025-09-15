@@ -1,7 +1,6 @@
 from copy import deepcopy
 
 import torch
-import torch_npu
 import torch.utils.data
 from tqdm.auto import tqdm
 from torch import nn
@@ -13,22 +12,17 @@ from evaluations import eval_ScienceQA, eval_MeetingBank, eval_PapyrusF, eval_CS
 from transformers import GenerationConfig
 import json
 import os
+
+'''
+Learning to Prompt for Continual Learning. CVPR, 2022.
+https://arxiv.org/abs/2112.08654
+'''
+
 generation_config = GenerationConfig(
     temperature=0.1,
     do_sample=True,
     num_return_sequences=1
 )
-
-from deepspeed.utils import safe_get_full_fp32_param
-
-class PromptPool(nn.Module):
-    def __init__(self, prompt_tensor):
-        super().__init__()
-        self.prompt = nn.Parameter(prompt_tensor)
-
-def print_grad(grad):
-    print("prompt grad shape:", grad.shape)
-
 
 
 def convert_L2P_model(model, args):
@@ -47,24 +41,11 @@ def convert_L2P_model(model, args):
 
         prompt_weigths = np.array(prompt_weigths)
         return prompt_weigths
-    
-    # print("Before init, model prompt is ", model.model.prompt," shape = ", model.model.prompt.shape)
-    # print("Before init, model prompt is ", model.model.prompt.shape)
-    print("args prompt init is ", args.prompt_init)
-
-
     # prompt_pool_shape = (args.pool_size, args.prompt_length, args.embed_tokens_dim)
     # if args.prompt_init == 'zero':
-    #     model.model.prompt = nn.Parameter(torch.zeros(prompt_pool_shape, dtype=torch.bfloat16,requires_grad=True)).to("npu")
-
+    #     model.model.prompt = nn.Parameter(torch.zeros(prompt_pool_shape, dtype=torch.bfloat16,requires_grad=True)).to("cuda")
     if args.prompt_init == 'uniform':
-        # model.model.prompt = nn.Parameter(torch.tensor(init_new_prompt(args.pool_size , args.prompt_length),requires_grad=True))
-        # model.model.register_parameter('prompt', nn.Parameter(torch.tensor(init_new_prompt(args.pool_size , args.prompt_length),requires_grad=True)))
-        model.model.prompt_pool = PromptPool(torch.tensor(init_new_prompt(args.pool_size , args.prompt_length),requires_grad=True).to("npu"))
-
-        model.model.prompt_pool.prompt.register_hook(print_grad)
-
-    print("After convert L2P model, model prompt is ", model.model.prompt_pool.prompt," shape = ", model.model.prompt_pool.prompt.shape)
+        model.model.prompt = nn.Parameter(torch.tensor(init_new_prompt(args.pool_size , args.prompt_length),requires_grad=True))
             
     return model
 
@@ -89,47 +70,9 @@ class L2P(CL_Base_Model):
         
         # use mean of prompt as key
         # only compatible with prompt, not prefix
-
-        # print("prompt is ", self.model.model.prompt_pool.prompt," shape = ", self.model.model.prompt_pool.prompt.shape)
-        
-
-        # prompt_mean = torch.mean(self.model.model.prompt_pool.prompt, dim=1)
-        # self.prompt_key = prompt_mean
-
-
-    def get_prompt_key(self):
-        # prompt_mean = torch.mean(self.model.model.prompt_pool.prompt, dim=1)
-        # self.prompt_key = prompt_mean
-        if hasattr(self.model, "module"):
-            # print("has module")
-            prompt = self.model.module.model.prompt_pool.prompt
-        else:
-            # print("no module")
-            prompt = self.model.model.prompt_pool.prompt
-
-        # print("query weight is ")
-        # print(self.model.module.model.layers[0].self_attn.q_proj.weight)
-        # no output
-
-        # full_prompt_list = [torch.zeros_like(prompt) for _ in range(torch.distributed.get_world_size())]
-        # torch.distributed.all_gather(full_prompt_list, prompt)
+        prompt_mean = torch.mean(self.model.model.prompt, dim=1)
+        self.prompt_key = prompt_mean
     
-        # torch.distributed.barrier()
-        # # 将分片合并为完整的张量
-        # full_prompt = torch.cat(full_prompt_list, dim=0)
-
-        # print("Full prompt shape: ", full_prompt.shape)  # 输出完整张量的形状进行验证
-        # self.prompt_key = torch.mean(full_prompt, dim=1)
-        # return self.prompt_key
-    
-        # from deepspeed.utils import safe_get_full_fp32_param
-        prompt_full = safe_get_full_fp32_param(prompt)
-        # print("Prompt full shape: ", prompt_full.shape)  # 输出完整张量的形状进行验证
-        # print("Prompt full: ", prompt_full)  # 输出完整张量的形状进行验证
-        self.prompt_key = torch.mean(prompt_full, dim=1)
-        return self.prompt_key
-
-
     def l2_normalize(self, x, dim=None, epsilon=1e-12):
         """Normalizes a given vector or matrix."""
         square_sum = torch.sum(x ** 2, dim=dim, keepdim=True)
@@ -157,8 +100,7 @@ class L2P(CL_Base_Model):
         else:
             raise NotImplementedError("Not supported way of calculating embedding keys!")
 
-        self.get_prompt_key()
-        prompt_norm = self.l2_normalize(self.prompt_key, dim=1).to("npu") # Pool_size, C
+        prompt_norm = self.l2_normalize(self.prompt_key, dim=1).to("cuda") # Pool_size, C
         inputs_embeds_norm = self.l2_normalize(inputs_embeds_mean, dim=1) # B, C
 
         similarity = torch.matmul(inputs_embeds_norm, prompt_norm.t()) # B, Pool_size
@@ -180,48 +122,17 @@ class L2P(CL_Base_Model):
         else:
             idx = prompt_mask # B, top_k
 
-        from deepspeed import zero
-        prompt_param = self.model.module.model.prompt_pool.prompt
-
-        with zero.GatheredParameters([prompt_param], modifier_rank=None):
-            # if torch.distributed.get_rank() == 0:
-            #     batched_prompt_raw = prompt_param[idx].clone()  # clone防止 inplace 问题
-            # else:
-            #     # 其它 rank 造一个假的 tensor，保证后续代码能跑
-            #     batched_prompt_raw = torch.zeros(
-            #         (batch_size, top_k, length, c), 
-            #         dtype=prompt_param.dtype, 
-            #         device=prompt_param.device
-            #     )
-            
-            batched_prompt_raw = prompt_param[idx] # B, top_k, length, C
-        
-        # print(f"batched_prompt_raw = {batched_prompt_raw}")
-        print(f"batched_prompt_raw shape = {batched_prompt_raw.shape}")
-        print(f"batched_prompt_raw.requires_grad = {batched_prompt_raw.requires_grad}")
-        print(f"batched_prompt_raw.grad_fn = {batched_prompt_raw.grad_fn}")
-    
+        batched_prompt_raw = self.model.model.prompt[idx] # B, top_k, length, C
         batch_size, top_k, length, c = batched_prompt_raw.shape
-
-        # batched_prompt_raw = self.model.module.model.prompt_pool.prompt[idx] # B, top_k, length, C
-        # batch_size, top_k, length, c = batched_prompt_raw.shape
-
         batched_prompt = batched_prompt_raw.reshape(batch_size, top_k * length, c) # B, top_k * length, C
         inputs_embeds = torch.cat([batched_prompt, inputs_embeds],axis=1)
         
         prefix_length = batched_prompt.shape[1]
-        attn_masks = torch.concat((torch.tensor(1).to("npu").repeat(batch_size,prefix_length),attn_masks), axis=1)
+        attn_masks = torch.concat((torch.tensor(1).to("cuda").repeat(batch_size,prefix_length),attn_masks), axis=1)
         labels = torch.concat((labels[0][0].repeat(batch_size,inputs_embeds.shape[1]-labels.shape[1]),labels),axis=1)
         outputs = self.model(inputs_embeds=inputs_embeds, labels=labels, attention_mask=attn_masks, use_cache=False)
         loss = outputs[0]
         
-        print(f"Step loss: {loss.item()}")
-        print(f"loss.requires_grad = {loss.requires_grad}")
-        print(f"loss.grad_fn = {loss.grad_fn}")
-
-        # 检查 print(self.model.model.prompt_pool.prompt.requires_grad) 是否为 True
-        print(f"Prompt requires_grad: {self.model.module.model.prompt_pool.prompt.requires_grad}")
-
         batched_key_norm = prompt_norm[idx]
         inputs_embeds_norm = inputs_embeds_norm.unsqueeze(1) # B, 1, C
         sim = batched_key_norm * inputs_embeds_norm # B, top_k, C
@@ -250,7 +161,7 @@ class L2P(CL_Base_Model):
 
             for step, batch in enumerate(tqdm(dataloader_train)):
                 del batch['sources']
-                batch = {k:batch[k].to("npu") for k in batch}
+                batch = {k:batch[k].to('cuda') for k in batch}
                 loss = self.train_step(batch)
                 
                 if self.args.global_rank == 0:
@@ -258,34 +169,16 @@ class L2P(CL_Base_Model):
                     progress_bar.update(1)
                     description = f"Epoch {epoch+1}, Step {step}, Loss: {loss.item():.4f}"
                     progress_bar.set_description(description, refresh=False)
-
-
-                for name, param in self.model.named_parameters():
-                    if param.requires_grad:
-                        print(f"Param name: {name}, Shape: {param.shape}, Requires grad: {param.requires_grad}")
-                        if param.grad is None:
-                            print(f"Warning: Gradient is None for param {name} with shape {param.shape}")
-                            # param.grad = safe_get_full_grad(param)
-                        elif param.grad.numel() == 0:
-                            print(f"Warning: Gradient is empty for param {name} with shape {param.shape}")
-                            # param.grad = torch.zeros_like(param)
-
-                print("Start to backward")
-
                 self.model.backward(loss, retain_graph=True)
+                # for n, lp in self.model.named_parameters():
+                #     # 1. gradient lookup
+                #     # For zero1 and zero2, gradient lookup must be called after `backward` and before `step`
+                #     # For zero3, gradient lookup must be called after `backward`
+                #     if "prompt" in n:
+                #         hp_grad = safe_get_full_grad(lp)
+                #         if self.args.global_rank == 0:
 
-                print("Finish backward")
-
-                for n, lp in self.model.named_parameters():
-                    # 1. gradient lookup
-                    # For zero1 and zero2, gradient lookup must be called after `backward` and before `step`
-                    # For zero3, gradient lookup must be called after `backward`
-                    if "prompt" in n:
-                        hp_grad = safe_get_full_grad(lp)
-                        if self.args.global_rank == 0:
-
-                            print("hp grad",hp_grad)
-
+                #             print(hp_grad)
                 self.model.step()
                 
                 
@@ -294,10 +187,10 @@ class L2P(CL_Base_Model):
         
     def evaluate_one_task(self, round, infer_task_id, task):
         if self.args.local_rank == -1:
-            device = torch.device("npu")
+            device = torch.device("cuda")
         else:
-            torch_npu.npu.set_device(self.args.local_rank)
-            device = torch.device("npu", self.args.local_rank)
+            torch.cuda.set_device(self.args.local_rank)
+            device = torch.device("cuda", self.args.local_rank)
 
         infer_dataloader = self.test_task_list[task]
 
@@ -335,9 +228,8 @@ class L2P(CL_Base_Model):
 
                     if self.embedding_key == 'mean':
                         inputs_embeds_mean = torch.mean(inputs_embeds, dim=1)
-                    
-                    prompt_key = self.get_prompt_key()
-                    prompt_norm = self.l2_normalize(prompt_key, dim=1).to("npu") # Pool_size, C
+
+                    prompt_norm = self.l2_normalize(self.prompt_key, dim=1).to("cuda") # Pool_size, C
                     inputs_embeds_norm = self.l2_normalize(inputs_embeds_mean, dim=1) # B, C
 
                     similarity = torch.matmul(inputs_embeds_norm, prompt_norm.t()) # B, Pool_size
@@ -345,14 +237,13 @@ class L2P(CL_Base_Model):
                     _, idx = torch.topk(similarity, k=self.top_k, dim=1) # B, top_k
                         
 
-                    batched_prompt_raw = safe_get_full_fp32_param(self.model.module.model.prompt_pool.prompt)[idx] # B, top_k, length, C
-                    # batched_prompt_raw = self.model.module.model.prompt_pool.prompt[idx] # B, top_k, length, C
+                    batched_prompt_raw = self.model.model.prompt[idx] # B, top_k, length, C
                     batch_size, top_k, length, c = batched_prompt_raw.shape
                     batched_prompt = batched_prompt_raw.reshape(batch_size, top_k * length, c) # B, top_k * length, C
                     inputs_embeds = torch.cat([batched_prompt, inputs_embeds],axis=1)
                     
                     prefix_length = batched_prompt.shape[1]
-                    attn_masks = torch.concat((torch.tensor(1).to("npu").repeat(batch_size,prefix_length),attn_masks), axis=1)                    
+                    attn_masks = torch.concat((torch.tensor(1).to("cuda").repeat(batch_size,prefix_length),attn_masks), axis=1)                    
                     
                     generate_ids = model.generate(inputs_embeds=inputs_embeds,
                                                   attention_mask=attn_masks,
