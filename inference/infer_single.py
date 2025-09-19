@@ -315,6 +315,9 @@ def main():
                     if "prompt" not in name:
                         params.requires_grad=False
 
+        if args.CL_method == "upcycle":
+
+
         if args.CL_method == "lora":
             from peft import PeftModel
             model = PeftModel.from_pretrained(model, inference_model_path)

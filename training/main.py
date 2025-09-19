@@ -427,12 +427,11 @@ def main():
             args.embed_tokens_length = embed_tokens_shape[0]
             args.embed_tokens = embed_tokens
             
-
-        print_rank_0("Start to convert model to {}".format(args.CL_method))
         if args.CL_method=="PP":
             args.prefix_len = 20
             args.task_length = len(train_task_list)
             model = convert_PP_model(model, args)
+            
         elif args.CL_method=="L2P":
             args.pool_size = 10
             args.prompt_length = 5
@@ -441,27 +440,8 @@ def main():
             for name, params in model.named_parameters():
                 if "prompt" not in name:
                     params.requires_grad=False
-
-            print_rank_0("Convert model to {} done".format(args.CL_method), args.global_rank)
-            # print_rank_0("Model Structure: {}".format(model), args.global_rank)
-            print_rank_0("Model prompt shape: {}".format(model.model.prompt_pool.prompt.shape), args.global_rank)
                     
     optimizer, lr_scheduler = get_optimizer(model)
-
-    print_rank_0(optimizer, args.global_rank)
-    print_rank_0("Before deepspeed init.", args.global_rank)
-    # print optimizer param names
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print_rank_0(name, args.global_rank)
-    # print optimizer param group info
-    for i, param_group in enumerate(optimizer.param_groups):
-        print_rank_0("Param group {}: {}".format(i, param_group), args.global_rank)
-
-    print_rank_0("Before deepspeed init, model is {}".format(model), args.global_rank)
-    print_rank_0("model.model is {}".format(model.model), args.global_rank)
-    # print_rank_0("Model prompt is {}".format(model.model.prompt_pool.prompt), args.global_rank)
-
     model, optimizer, _, lr_scheduler = deepspeed.initialize(
         model=model,
         optimizer=optimizer,
@@ -469,53 +449,6 @@ def main():
         config=ds_config,
         lr_scheduler=lr_scheduler,
         dist_init_required=True)
-
-    for group in optimizer.param_groups:
-        for p in group['params']:
-            print(p.shape, p.requires_grad)
-    
-    if args.CL_method =="L2P":
-        from deepspeed.utils import safe_get_full_fp32_param
-        prompt = model.module.model.prompt_pool.prompt
-        prompt_full = safe_get_full_fp32_param(prompt)
-        # print_rank_0("After deepspeed init, model prompt is {}".format(model.module.model.prompt_pool.prompt))
-        print_rank_0("After deepspeed init, model prompt is {}, shape = {}".format(prompt_full, prompt_full.shape), args.global_rank)
-        # pass
-
-    # # Use the context manager to gather the prompt and print it on rank 0
-    # if args.global_rank == 0:
-    #     from deepspeed.utils.zero_to_fp32 import get_fp32_state_dict_from_zero_checkpoint
-
-    #     # Get the state dict of the prompt. This will gather the sharded tensors.
-    #     prompt_state_dict = get_fp32_state_dict_from_zero_checkpoint(
-    #         model.module,
-    #         tag=None, # not relevant for this use case
-            
-    #     )['prompt']
-
-    #     print("After deepspeed init, model prompt is: {}".format(prompt_state_dict))
-
-
-    print_rank_0("After deepspeed init, model is {}".format(model), args.global_rank)
-    print_rank_0("model.model is {}".format(model.model), args.global_rank)
-
-    # if args.CL_method=="PP" or args.CL_method=="L2P":
-
-    #     if args.CL_method=="PP":
-    #         args.prefix_len = 20
-    #         args.task_length = len(train_task_list)
-    #         model = convert_PP_model(model, args)
-    #     elif args.CL_method=="L2P":
-    #         args.pool_size = 10
-    #         args.prompt_length = 5
-    #         args.prompt_init = "uniform"
-    #         model = convert_L2P_model(model, args)
-    #         for name, params in model.named_parameters():
-    #             if "prompt" not in name:
-    #                 params.requires_grad=False
-    #     print_rank_0("Convert model to {} done".format(args.CL_method), args.global_rank)
-    #     # print_rank_0("Model Structure: {}".format(model), args.global_rank)
-    #     print_rank_0("Model prompt shape: {}".format(model.model.prompt.shape), args.global_rank)
 
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable()

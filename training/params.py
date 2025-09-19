@@ -9,7 +9,7 @@ from model.Replay.LFPT5 import LFPT5
 from model.Regular.O_LoRA import O_LoRA
 from model.base_model import CL_Base_Model
 from model.lora import lora
-
+from model.Dynamic_network.upcycling import Upcycle
 
 
 Method2Class = {"PP":PP,
@@ -22,7 +22,9 @@ Method2Class = {"PP":PP,
                 "LFPT5":LFPT5, 
                 "O-LoRA":O_LoRA,
                 "base":CL_Base_Model,
-                "lora":lora}
+                "lora":lora,
+                "upcycle":Upcycle,
+                }
 
 AllDatasetName = ["C-STANCE","FOMC","MeetingBank","Papyrus-f","Py150","ScienceQA","ToolBench","NumGLUE-cm","NumGLUE-ds","20Minuten"]
 
