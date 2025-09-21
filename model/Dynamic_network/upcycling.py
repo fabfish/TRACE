@@ -40,11 +40,11 @@ class Expert(nn.Module):
 
 class Router(nn.Module):
     """Router module for dispatching tokens to experts."""
-    def __init__(self, config):
+    def __init__(self, config, num_experts):
         super().__init__()
         self.top_k = config.num_activated_experts
-        # Start with a router for 0 experts, it will be expanded dynamically
-        self.classifier = nn.Linear(config.hidden_size, 0) 
+        # Initialize the router classifier with the full number of experts
+        self.classifier = nn.Linear(config.hidden_size, num_experts) 
 
     def forward(self, hidden_states: torch.Tensor):
         # Input shape: [batch_size, seq_len, hidden_dim] -> [num_tokens, hidden_dim]
@@ -98,6 +98,53 @@ def moe_forward(self, x):
         return shared_expert_output + final_expert_output
     else:
         return shared_expert_output
+    
+# New function to convert the model to an MoE model
+def convert_upcycle_model(model, args, num_tasks=0):
+    """
+    In-place conversion of a standard model to an Upcycle MoE model by
+    injecting expert lists and routers.
+    """
+    num_experts = getattr(args, 'num_experts_per_task', 8)
+    num_total_experts = num_tasks * num_experts
+    
+    print(f"⚙️ Converting to Upcycling model with {num_total_experts} total experts for {num_tasks} tasks.")
+    for layer in model.model.layers:
+        mlp = layer.mlp
+        
+        mlp.original_forward = mlp.forward
+        mlp.scientific_experts = nn.ModuleList([])
+        
+        if not hasattr(model.model.config, 'num_activated_experts'):
+             model.model.config.num_activated_experts = getattr(args, 'num_activated_experts', 2)
+
+        mlp.router = Router(model.model.config, num_total_experts)
+        
+        h = mlp.gate_proj.in_features
+        H = mlp.gate_proj.out_features
+        W_g = mlp.gate_proj.weight.data
+        W_u = mlp.up_proj.weight.data
+        W_d = mlp.down_proj.weight.data
+        new_intermediate_size = H // num_experts 
+        
+        for i in range(num_total_experts):
+            new_expert = Expert(model.model.config, new_intermediate_size).to("npu")
+            
+            task_id = i // num_experts
+            expert_idx_in_task = i % num_experts
+            
+            start_col = expert_idx_in_task * new_intermediate_size
+            end_col = (expert_idx_in_task + 1) * new_intermediate_size
+            
+            new_expert.gate_proj.weight.data = W_g[start_col:end_col, :].clone()
+            new_expert.up_proj.weight.data = W_u[start_col:end_col, :].clone()
+            new_expert.down_proj.weight.data = W_d[:, start_col:end_col].clone()
+            
+            mlp.scientific_experts.append(new_expert)
+            
+        layer.mlp.forward = types.MethodType(moe_forward, layer.mlp)
+        
+    return model
 
 
 class Upcycle(CL_Base_Model):
@@ -114,7 +161,9 @@ class Upcycle(CL_Base_Model):
         print_rank_0(f"[MoE-Upcycle] Initializing model with {self.num_experts_per_task} experts per task and {self.num_activated_experts} activated experts.", self.args.global_rank)
 
         # Before DeepSpeed initialization, modify the model architecture
-        self._prepare_model_for_upcycling()
+        
+        # self._prepare_model_for_upcycling()
+
         if not hasattr(self.args, 'device'):
             self.args.device = torch.device("npu")
 
@@ -190,7 +239,8 @@ class Upcycle(CL_Base_Model):
             W_d = mlp.down_proj.weight.data
             
             # Calculate the intermediate size for the new, smaller experts
-            new_intermediate_size = H // self.num_experts_per_task
+            new_intermediate_size = H // self.num_experts_per_task 
+            print(" new_intermediate_size is", new_intermediate_size)
         
 
             # Create and initialize new experts for the current task

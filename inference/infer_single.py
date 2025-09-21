@@ -52,6 +52,8 @@ from model.Replay.LFPT5 import getInitialPrompt
 from model.Dynamic_network.PP import PP, convert_PP_model
 from model.Dynamic_network.L2P import convert_L2P_model
 
+from model.Dynamic_network.upcycling import convert_upcycle_model
+
 # dist.init_process_group(backend='nccl')
 
 
@@ -142,6 +144,16 @@ def parse_args():
     parser.add_argument('--CL_method',
             default=None,
             help='continual learning method used')
+    
+    # Upcycling-specific arguments
+    parser.add_argument('--num_experts_per_task',
+                        type=int,
+                        default=8,
+                        help="Number of new experts to add for each new task in Upcycling.")
+    parser.add_argument('--num_activated_experts',
+                        type=int,
+                        default=2,
+                        help="Number of activated experts per token.")
 
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
@@ -260,8 +272,8 @@ def main():
         print_rank_0("Inference Model Path: " + inference_model_path, args.local_rank)
 
         model = create_hf_model(AutoModelForCausalLM,
-                                # args.model_name_or_path,
-                                inference_model_path,
+                                args.model_name_or_path,
+                                # inference_model_path,
                                 tokenizer,
                                 ds_config=None,
                                 )
@@ -316,6 +328,33 @@ def main():
                         params.requires_grad=False
 
         if args.CL_method == "upcycle":
+            args.num_experts_per_task = 8 # A common setting, or get from args
+            args.num_activated_experts = 2 # A common setting, or get from args
+
+            # 记录时间
+            import time
+            start_time = time.time()
+            model = convert_upcycle_model(model, args, num_tasks=round + 1)
+            end_time = time.time()
+            print(f"Time taken to convert model with Upcycling: {end_time - start_time} seconds")
+            
+            start_time = time.time()
+            # Load the full model state, including new experts
+            state_dict = torch.load(os.path.join(inference_model_path, "pytorch_model.bin"), map_location='cpu')
+            end_time = time.time()
+            print(f"Time taken to load state dict from disk: {end_time - start_time} seconds")
+
+            start_time = time.time()
+            print_rank_0(f"Loading state dict keys...", args.local_rank)
+            model.load_state_dict(state_dict)
+            end_time = time.time()
+            print(f"Time taken to load state dict into model: {end_time - start_time} seconds")
+            
+            start_time = time.time()
+            model = model.to(device)
+            end_time = time.time()
+            print(f"Time taken to move model to device: {end_time - start_time} seconds")
+            del state_dict
 
 
         if args.CL_method == "lora":

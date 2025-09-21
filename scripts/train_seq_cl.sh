@@ -13,11 +13,11 @@ EPOCH_LIST="5,3,7,5,3,5,5,7"
 
 # --- OOM 修复配置 ---
 MAX_LEN=1024
-# GRAD_CKPT="--gradient_checkpointing"
+GRAD_CKPT="--gradient_checkpointing"
 
 # --- Offload 配置 (按需启用) ---
 # 如果上面的配置仍然OOM，取消下面一行的注释
-# OFFLOAD_FLAG="--offload"
+OFFLOAD_FLAG="--offload"
 
 # mkdir /data/yuzhiyuan/outputs_LLM-CL/qwen_full/cl/$cl_method
 # mk all the parent directories if not exist
