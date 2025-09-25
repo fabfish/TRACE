@@ -109,7 +109,15 @@ def convert_upcycle_model(model, args, num_tasks=0):
     num_total_experts = num_tasks * num_experts
     
     print(f"⚙️ Converting to Upcycling model with {num_total_experts} total experts for {num_tasks} tasks.")
-    for layer in model.model.layers:
+
+    # for layer in model.model.layers:
+    for i, layer in enumerate(model.model.layers):
+
+        if i % 2 != 0:
+            continue
+        else:
+            print(f" Converting layer {i} to MoE layer.")
+
         mlp = layer.mlp
         
         mlp.original_forward = mlp.forward
@@ -125,7 +133,7 @@ def convert_upcycle_model(model, args, num_tasks=0):
         W_g = mlp.gate_proj.weight.data
         W_u = mlp.up_proj.weight.data
         W_d = mlp.down_proj.weight.data
-        new_intermediate_size = H // num_experts 
+        new_intermediate_size = H // num_experts // 64
         
         for i in range(num_total_experts):
             new_expert = Expert(model.model.config, new_intermediate_size).to("npu")
@@ -162,6 +170,7 @@ class Upcycle(CL_Base_Model):
 
         # Before DeepSpeed initialization, modify the model architecture
         
+        # for training
         # self._prepare_model_for_upcycling()
 
         if not hasattr(self.args, 'device'):
@@ -174,27 +183,30 @@ class Upcycle(CL_Base_Model):
         Also patches the forward method.
         """
         for i, layer in enumerate(self.model.model.layers):
-            mlp = layer.mlp
-            
-            # Store original FFN forward method
-            # mlp.original_forward = types.MethodType(mlp.forward, mlp)
-            mlp.original_forward = mlp.forward  # 不要用 MethodType
-            print_rank_0(f" original_forward is {mlp.original_forward}", self.args.global_rank)
+            if i % 2 == 0:
+                mlp = layer.mlp
+                
+                # Store original FFN forward method
+                # mlp.original_forward = types.MethodType(mlp.forward, mlp)
+                mlp.original_forward = mlp.forward  # 不要用 MethodType
+                print_rank_0(f" original_forward is {mlp.original_forward}", self.args.global_rank)
 
-            # # test the method
-            # test_input = torch.randn(2, 4, mlp.gate_proj.in_features).to("npu")
-            # test_output = mlp.original_forward(test_input)
-            # print_rank_0(f"Test original_forward output shape: {test_output.shape}", self.args.global_rank)
-            
-            # Add MoE components
-            mlp.scientific_experts = nn.ModuleList([])
-            self.model.model.config.num_activated_experts = self.num_activated_experts
-            mlp.router = Router(self.model.model.config)
-            
-            # Monkey-patch the forward method
-            layer.mlp.forward = types.MethodType(moe_forward, layer.mlp)
-            # layer.mlp.forward = moe_forward
-            print_rank_0(f"Patched forward method for layer {i}", self.args.global_rank)
+                # # test the method
+                # test_input = torch.randn(2, 4, mlp.gate_proj.in_features).to("npu")
+                # test_output = mlp.original_forward(test_input)
+                # print_rank_0(f"Test original_forward output shape: {test_output.shape}", self.args.global_rank)
+                
+                # Add MoE components
+                mlp.scientific_experts = nn.ModuleList([])
+                self.model.model.config.num_activated_experts = self.num_activated_experts
+                mlp.router = Router(self.model.model.config)
+                
+                # Monkey-patch the forward method
+                layer.mlp.forward = types.MethodType(moe_forward, layer.mlp)
+                # layer.mlp.forward = moe_forward
+                print_rank_0(f"Patched forward method for layer {i}", self.args.global_rank)
+            else:
+                print_rank_0(f"Skipping layer {i} for MoE conversion", self.args.global_rank)
 
 
     def train_continual(self):
@@ -222,12 +234,58 @@ class Upcycle(CL_Base_Model):
 
         print_rank_0(f"Upcycling model for new task: {task} (Task ID: {i_task})", self.args.global_rank)
         
-        total_experts_before = sum(len(layer.mlp.scientific_experts) for layer in self.model.model.layers) // len(self.model.model.layers)
+        # layer = self.model.model.layers[0]
+        if hasattr(self.model.model.layers[0].mlp, "scientific_experts") and len(self.model.model.layers[0].mlp.scientific_experts) > 0:
+            print_rank_0(f"Current number of experts per layer before upcycling: {len(self.model.model.layers[0].mlp.scientific_experts)}", self.args.global_rank)
+
+            # total_experts_before = sum(len(layer.mlp.scientific_experts) for layer in self.model.model.layers) // len(self.model.model.layers)
+            # some layer may not have experts
+            total_experts_before = len(self.model.model.layers[0].mlp.scientific_experts)
+
+        else:
+            total_experts_before = 0
+            print_rank_0(f"No existing experts found. Starting fresh.", self.args.global_rank)
+
+            for i, layer in enumerate(self.model.model.layers):
+                if i % 2 != 0:
+                    continue
+                else:
+                    print(f" Converting layer {i} to MoE layer.")
+
+                mlp = layer.mlp
+                
+                # Store original FFN forward method
+                # mlp.original_forward = types.MethodType(mlp.forward, mlp)
+                mlp.original_forward = mlp.forward  # 不要用 MethodType
+                print_rank_0(f" original_forward is {mlp.original_forward}", self.args.global_rank)
+
+                # # test the method
+                # test_input = torch.randn(2, 4, mlp.gate_proj.in_features).to("npu")
+                # test_output = mlp.original_forward(test_input)
+                # print_rank_0(f"Test original_forward output shape: {test_output.shape}", self.args.global_rank)
+                
+                # Add MoE components
+                mlp.scientific_experts = nn.ModuleList([])
+                self.model.model.config.num_activated_experts = self.num_activated_experts
+                # mlp.router = Router(self.model.model.config)
+                mlp.router = Router(self.model.model.config, 0)
+                
+                # Monkey-patch the forward method
+                layer.mlp.forward = types.MethodType(moe_forward, layer.mlp)
+                # layer.mlp.forward = moe_forward
+                print_rank_0(f"Patched forward method for layer {i}", self.args.global_rank)
+
         start_expert_idx = total_experts_before
         end_expert_idx = start_expert_idx + self.num_experts_per_task
         self.task2expert_range[i_task] = range(start_expert_idx, end_expert_idx)
 
-        for layer in self.model.model.layers:
+        # for layer in self.model.model.layers:
+        for i, layer in enumerate(self.model.model.layers):
+            if i % 2 != 0:
+                continue
+            else:
+                print(f" Appending experts to layer {i}.")
+
             mlp = layer.mlp
             
             # Get the weights from the shared expert (original FFN)
@@ -239,8 +297,9 @@ class Upcycle(CL_Base_Model):
             W_d = mlp.down_proj.weight.data
             
             # Calculate the intermediate size for the new, smaller experts
-            new_intermediate_size = H // self.num_experts_per_task 
-            print(" new_intermediate_size is", new_intermediate_size)
+            new_intermediate_size = H // self.num_experts_per_task // 64
+            # print(" new_intermediate_size is", new_intermediate_size)
+            print_rank_0(f" Intermediate size for new experts: {new_intermediate_size}", self.args.global_rank)
         
 
             # Create and initialize new experts for the current task
@@ -352,7 +411,11 @@ class Upcycle(CL_Base_Model):
             return
 
         print_rank_0(f"Unfreezing experts in range {expert_range_to_train} for task {i_task}", self.args.global_rank)
-        for layer in self.model.model.layers:
+        # for layer in self.model.model.layers:
+        for i, layer in enumerate(self.model.model.layers):
+            if i % 2 != 0:
+                continue
+
             for expert_idx in expert_range_to_train:
                 for param in layer.mlp.scientific_experts[expert_idx].parameters():
                     param.requires_grad = True
