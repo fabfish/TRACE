@@ -22,20 +22,20 @@ OFFLOAD_FLAG="--offload"
 # mkdir /data/yuzhiyuan/outputs_LLM-CL/qwen_full/cl/$cl_method
 # mk all the parent directories if not exist
 
-mkdir -p /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/even
+mkdir -p /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/four_new
 
 deepspeed --include=localhost:0,1,2,3,4,5,6,7 --master_port $port training/main.py \
     --data_path /data/datasets/TRACE-Benchmark/LLM-CL-Benchmark_500 \
     --dataset_name $DATASET_LIST \
     --model_name_or_path $MODEL_PATH \
-    --per_device_train_batch_size 16 \
+    --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 16 \
     --max_prompt_len $MAX_LEN \
     --max_ans_len 512 \
     --learning_rate 1e-5 \
     --weight_decay 0. \
     --num_train_epochs $EPOCH_LIST \
-    --gradient_accumulation_steps 1 \
+    --gradient_accumulation_steps 16 \
     $GRAD_CKPT \
     $OFFLOAD_FLAG \
     --lr_scheduler_type cosine \
@@ -45,4 +45,4 @@ deepspeed --include=localhost:0,1,2,3,4,5,6,7 --master_port $port training/main.
     --deepspeed \
     --print_loss \
     --CL_method $CL_METHOD \
-    --output_dir /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/even 2>&1 | tee /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/even/train.log &
+    --output_dir /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/four_new 2>&1 | tee /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/four_new/train.log &

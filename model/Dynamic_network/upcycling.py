@@ -113,8 +113,9 @@ def convert_upcycle_model(model, args, num_tasks=0):
     # for layer in model.model.layers:
     for i, layer in enumerate(model.model.layers):
 
-        if i % 2 != 0:
+        if i % 4 != 0:
             continue
+            pass
         else:
             print(f" Converting layer {i} to MoE layer.")
 
@@ -133,7 +134,7 @@ def convert_upcycle_model(model, args, num_tasks=0):
         W_g = mlp.gate_proj.weight.data
         W_u = mlp.up_proj.weight.data
         W_d = mlp.down_proj.weight.data
-        new_intermediate_size = H // num_experts // 64
+        new_intermediate_size = H // num_experts # // 64
         
         for i in range(num_total_experts):
             new_expert = Expert(model.model.config, new_intermediate_size).to("npu")
@@ -183,7 +184,7 @@ class Upcycle(CL_Base_Model):
         Also patches the forward method.
         """
         for i, layer in enumerate(self.model.model.layers):
-            if i % 2 == 0:
+            if i % 4 == 0:
                 mlp = layer.mlp
                 
                 # Store original FFN forward method
@@ -247,8 +248,9 @@ class Upcycle(CL_Base_Model):
             print_rank_0(f"No existing experts found. Starting fresh.", self.args.global_rank)
 
             for i, layer in enumerate(self.model.model.layers):
-                if i % 2 != 0:
+                if i % 4 != 0:
                     continue
+                    pass
                 else:
                     print(f" Converting layer {i} to MoE layer.")
 
@@ -281,8 +283,9 @@ class Upcycle(CL_Base_Model):
 
         # for layer in self.model.model.layers:
         for i, layer in enumerate(self.model.model.layers):
-            if i % 2 != 0:
+            if i % 4 != 0:
                 continue
+                pass
             else:
                 print(f" Appending experts to layer {i}.")
 
@@ -297,7 +300,7 @@ class Upcycle(CL_Base_Model):
             W_d = mlp.down_proj.weight.data
             
             # Calculate the intermediate size for the new, smaller experts
-            new_intermediate_size = H // self.num_experts_per_task // 64
+            new_intermediate_size = H // self.num_experts_per_task # // 64
             # print(" new_intermediate_size is", new_intermediate_size)
             print_rank_0(f" Intermediate size for new experts: {new_intermediate_size}", self.args.global_rank)
         
@@ -413,8 +416,9 @@ class Upcycle(CL_Base_Model):
         print_rank_0(f"Unfreezing experts in range {expert_range_to_train} for task {i_task}", self.args.global_rank)
         # for layer in self.model.model.layers:
         for i, layer in enumerate(self.model.model.layers):
-            if i % 2 != 0:
+            if i % 4 != 0:
                 continue
+                pass
 
             for expert_idx in expert_range_to_train:
                 for param in layer.mlp.scientific_experts[expert_idx].parameters():
