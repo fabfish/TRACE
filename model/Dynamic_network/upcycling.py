@@ -113,7 +113,7 @@ def convert_upcycle_model(model, args, num_tasks=0):
     # for layer in model.model.layers:
     for i, layer in enumerate(model.model.layers):
 
-        if i % 4 != 0:
+        if i % 2 != 0:
             continue
             pass
         else:
@@ -184,7 +184,7 @@ class Upcycle(CL_Base_Model):
         Also patches the forward method.
         """
         for i, layer in enumerate(self.model.model.layers):
-            if i % 4 == 0:
+            if i % 2 == 0:
                 mlp = layer.mlp
                 
                 # Store original FFN forward method
@@ -248,7 +248,7 @@ class Upcycle(CL_Base_Model):
             print_rank_0(f"No existing experts found. Starting fresh.", self.args.global_rank)
 
             for i, layer in enumerate(self.model.model.layers):
-                if i % 4 != 0:
+                if i % 2 != 0:
                     continue
                     pass
                 else:
@@ -283,7 +283,7 @@ class Upcycle(CL_Base_Model):
 
         # for layer in self.model.model.layers:
         for i, layer in enumerate(self.model.model.layers):
-            if i % 4 != 0:
+            if i % 2 != 0:
                 continue
                 pass
             else:
@@ -416,7 +416,7 @@ class Upcycle(CL_Base_Model):
         print_rank_0(f"Unfreezing experts in range {expert_range_to_train} for task {i_task}", self.args.global_rank)
         # for layer in self.model.model.layers:
         for i, layer in enumerate(self.model.model.layers):
-            if i % 4 != 0:
+            if i % 2 != 0:
                 continue
                 pass
 
