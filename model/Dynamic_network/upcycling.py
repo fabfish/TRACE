@@ -100,59 +100,136 @@ def moe_forward(self, x):
         return shared_expert_output
     
 # New function to convert the model to an MoE model
-def convert_upcycle_model(model, args, num_tasks=0):
+def convert_upcycle_model(model, args, num_tasks=0, incremental=False):
     """
-    In-place conversion of a standard model to an Upcycle MoE model by
-    injecting expert lists and routers.
+    Convert the model to an Upcycling MoE model.
+
+    - If incremental == False: build model with num_tasks * num_experts_per_task experts (same as before).
+    - If incremental == True: append num_tasks * num_experts_per_task new experts to existing MoE
+      (if model already has experts), otherwise initialize and append.
+
+    参数:
+    - model: HF model wrapper (expected to have model.model.layers)
+    - args: 包含 num_experts_per_task, num_activated_experts, device 等
+    - num_tasks: 当 incremental=False 表示总任务数；当 incremental=True 表示新增任务数
+    - incremental: 是否以增量方式追加专家（True）还是重建为总专家数（False）
     """
-    num_experts = getattr(args, 'num_experts_per_task', 8)
-    num_total_experts = num_tasks * num_experts
-    
-    print(f"⚙️ Converting to Upcycling model with {num_total_experts} total experts for {num_tasks} tasks.")
+    num_experts = int(getattr(args, 'num_experts_per_task', 8))
+    device = getattr(args, 'device', torch.device("npu"))
+    # make sure device is torch.device or string acceptable by .to()
+    if isinstance(device, str):
+        device_str = device
+    else:
+        device_str = device
 
-    # for layer in model.model.layers:
-    for i, layer in enumerate(model.model.layers):
+    if incremental:
+        num_new_experts = int(num_tasks) * num_experts
+        if num_new_experts <= 0:
+            print_rank_0(f"[Upcycle] incremental=True but num_new_experts=={num_new_experts}, nothing to do.", getattr(args, 'global_rank', 0))
+            return model
+        print_rank_0(f"⚙️ Incrementally adding {num_new_experts} experts per layer.", getattr(args, 'global_rank', 0))
 
-        if i % 2 != 0:
+        for li, layer in enumerate(model.model.layers):
+            if li % 2 != 0:
+                continue
+
+            mlp = layer.mlp
+            # Ensure existing MoE structures present; if not, initialize as base
+            if not hasattr(mlp, "scientific_experts") or len(mlp.scientific_experts) == 0:
+                # initialize MLP to MoE baseline first (no experts, but router present)
+                mlp.original_forward = mlp.forward
+                mlp.scientific_experts = nn.ModuleList([])
+                if not hasattr(model.model.config, 'num_activated_experts'):
+                    model.model.config.num_activated_experts = int(getattr(args, 'num_activated_experts', 2))
+                mlp.router = Router(model.model.config, 0)
+
+            # Use main FFN weights as source for new experts
+            W_g = mlp.gate_proj.weight.data  # [H, h]
+            W_u = mlp.up_proj.weight.data    # [H, h]
+            W_d = mlp.down_proj.weight.data  # [h, H]
+
+            h = mlp.gate_proj.in_features
+            H = mlp.gate_proj.out_features
+            # intermediate size for each expert (consistent with how experts were derived)
+            new_intermediate_size = H // num_experts
+
+            old_total = len(mlp.scientific_experts)
+            for idx in range(num_new_experts):
+                # build new expert
+                new_expert = Expert(model.model.config, new_intermediate_size)
+                new_expert.to(device_str)
+                expert_idx_in_task = (old_total + idx) % num_experts
+                start_col = expert_idx_in_task * new_intermediate_size
+                end_col = (expert_idx_in_task + 1) * new_intermediate_size
+
+                # copy slices from shared FFN (same logic as upcycle_one_task)
+                new_expert.gate_proj.weight.data = W_g[start_col:end_col, :].clone()
+                new_expert.up_proj.weight.data = W_u[start_col:end_col, :].clone()
+                new_expert.down_proj.weight.data = W_d[:, start_col:end_col].clone()
+
+                mlp.scientific_experts.append(new_expert)
+
+            # expand router classifier
+            old_classifier = mlp.router.classifier
+            old_out, old_in = old_classifier.weight.data.shape if hasattr(old_classifier, 'weight') else (0, H)
+            new_out = old_out + num_new_experts
+            new_router = nn.Linear(old_in, new_out).to(device_str)
+            if old_out > 0:
+                # copy old weights and bias into prefix
+                new_router.weight.data[:old_out, :].copy_(old_classifier.weight.data)
+                if old_classifier.bias is not None:
+                    new_router.bias.data[:old_out].copy_(old_classifier.bias.data)
+            mlp.router.classifier = new_router
+
+        return model
+
+    # non-incremental: build total experts = num_tasks * num_experts (legacy behavior)
+    num_total_experts = int(num_tasks) * num_experts
+    print_rank_0(f"⚙️ Converting to Upcycling model with {num_total_experts} total experts for {num_tasks} tasks.", getattr(args, 'global_rank', 0))
+
+    for li, layer in enumerate(model.model.layers):
+        if li % 2 != 0:
             continue
-            pass
-        else:
-            print(f" Converting layer {i} to MoE layer.")
+        print_rank_0(f" Converting layer {li} to MoE layer.", getattr(args, 'global_rank', 0))
 
         mlp = layer.mlp
-        
+
+        # store original forward
         mlp.original_forward = mlp.forward
         mlp.scientific_experts = nn.ModuleList([])
-        
-        if not hasattr(model.model.config, 'num_activated_experts'):
-             model.model.config.num_activated_experts = getattr(args, 'num_activated_experts', 2)
 
+        if not hasattr(model.model.config, 'num_activated_experts'):
+            model.model.config.num_activated_experts = int(getattr(args, 'num_activated_experts', 2))
+
+        # create router sized for total experts
         mlp.router = Router(model.model.config, num_total_experts)
-        
+
         h = mlp.gate_proj.in_features
         H = mlp.gate_proj.out_features
         W_g = mlp.gate_proj.weight.data
         W_u = mlp.up_proj.weight.data
         W_d = mlp.down_proj.weight.data
-        new_intermediate_size = H // num_experts # // 64
-        
-        for i in range(num_total_experts):
-            new_expert = Expert(model.model.config, new_intermediate_size).to("npu")
-            
-            task_id = i // num_experts
-            expert_idx_in_task = i % num_experts
-            
+        new_intermediate_size = H // num_experts
+
+        for ei in range(num_total_experts):
+            new_expert = Expert(model.model.config, new_intermediate_size)
+            new_expert.to(device_str)
+
+            task_id = ei // num_experts
+            expert_idx_in_task = ei % num_experts
+
             start_col = expert_idx_in_task * new_intermediate_size
             end_col = (expert_idx_in_task + 1) * new_intermediate_size
-            
+
             new_expert.gate_proj.weight.data = W_g[start_col:end_col, :].clone()
             new_expert.up_proj.weight.data = W_u[start_col:end_col, :].clone()
             new_expert.down_proj.weight.data = W_d[:, start_col:end_col].clone()
-            
+
             mlp.scientific_experts.append(new_expert)
-            
+
+        # patch forward
         layer.mlp.forward = types.MethodType(moe_forward, layer.mlp)
-        
+
     return model
 
 
@@ -166,6 +243,14 @@ class Upcycle(CL_Base_Model):
         # Assumes args for MoE are passed from main.py
         self.num_experts_per_task = getattr(args, 'num_experts_per_task', 8)
         self.num_activated_experts = getattr(args, 'num_activated_experts', 2)
+        # Upcycle control: interval and explicit task names
+        self.upcycle_interval = getattr(args, 'upcycle_interval', 4)
+        raw_names = getattr(args, 'upcycle_task_names', [])
+        if isinstance(raw_names, str):
+            names = raw_names.split(',') if raw_names else []
+        else:
+            names = raw_names
+        self.upcycle_task_names = set([n.strip() for n in names if n and n.strip()])
 
         print_rank_0(f"[MoE-Upcycle] Initializing model with {self.num_experts_per_task} experts per task and {self.num_activated_experts} activated experts.", self.args.global_rank)
 
@@ -211,12 +296,27 @@ class Upcycle(CL_Base_Model):
 
 
     def train_continual(self):
-        for i_task, task in enumerate(self.train_task_list):
+         for i_task, task in enumerate(self.train_task_list):
             self.current_task_id = i_task
             print_rank_0(f"[MoE-Upcycle] >>>>> Start task-{i_task}: {task}", self.args.global_rank)
 
-            # 1. For a new task, upcycle the model by adding new experts and expanding the router.
-            self.upcycle_one_task(task, i_task)
+#            # 1. For a new task, upcycle the model by adding new experts and expanding the router.
+#            self.upcycle_one_task(task, i_task)
+
+            # Decide whether to upcycle for this task:
+            # - upcycle if index modulo interval == 0
+            # - OR if task name listed in upcycle_task_names
+            do_upcycle = False
+            if self.upcycle_interval and (i_task % max(1, self.upcycle_interval) == 0):
+                do_upcycle = True
+            if task in self.upcycle_task_names:
+                do_upcycle = True
+
+            if do_upcycle:
+                # 1. For a new task, upcycle the model by adding new experts and expanding the router.
+                self.upcycle_one_task(task, i_task)
+            else:
+                print_rank_0(f"[MoE-Upcycle] Skipping upcycle for task-{i_task}: {task}", self.args.global_rank)
 
             # 2. Train the model on the current task. Only newly added parameters will be updated.
             self.train_one_task(task, i_task, int(self.args.num_train_epochs[i_task]))

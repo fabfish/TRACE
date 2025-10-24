@@ -14,6 +14,7 @@ import ast
 file_paths = {
     "1L": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/newnew/predictions_single/evaluation_matrix.xlsx",
     "2L": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/even_new_stable/predictions_single/evaluation_matrix.xlsx",
+    "2L_G": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/grouped_4of8/predictions_single/evaluation_matrix.xlsx",
     "4L": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/four_new/predictions_single/evaluation_matrix.xlsx",
     "4L_R": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/four copy?/predictions_single/evaluation_matrix.xlsx",
     "Sub SFT": "/data/yuzhiyuan/outputs_LLM-CL/naive_llama3_1B_500/predictions_single/evaluation_matrix.xlsx",

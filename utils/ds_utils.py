@@ -7,7 +7,7 @@ MICRO_BATCH_SIZE = 4
 
 
 def get_train_ds_config(offload,
-                        stage=2,
+                        stage=0,
                         enable_hybrid_engine=False,
                         inference_tp_size=1,
                         release_inference_cache=False,

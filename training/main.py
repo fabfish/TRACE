@@ -196,6 +196,16 @@ def parse_args():
     parser.add_argument('--CL_method',
                 default=None,
                 help='continual learning method used')
+
+    # Upcycle 控制：每隔 N 个任务扩张一次，或在指定任务名处强制扩张（逗号分隔）
+    parser.add_argument('--upcycle-interval',
+                        type=int,
+                        default=4,
+                        help='Number of tasks between upcycles (default 4). Set 1 to upcycle every task.')
+    parser.add_argument('--upcycle-task-names',
+                        type=str,
+                        default='',
+                        help='Comma-separated dataset names where upcycle should be forced (e.g. "ScienceQA,Py150").')
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
@@ -353,15 +363,24 @@ def main():
         train_dataloader = DataLoader(train_dataset,
                                     collate_fn=data_collator,
                                     sampler=train_sampler,
-                                    batch_size=args.per_device_train_batch_size)
+                                    batch_size=args.per_device_train_batch_size,
+                                    num_workers=4,
+                                    pin_memory=True
+                                    )
         eval_dataloader = DataLoader(eval_dataset,
                                     collate_fn=data_collator,
                                     sampler=eval_sampler,
-                                    batch_size=args.per_device_eval_batch_size)
+                                    batch_size=args.per_device_eval_batch_size,
+                                    num_workers=4,
+                                    pin_memory=True
+                                    )
         test_dataloader = DataLoader(test_dataset,
                             collate_fn=inf_data_collator,
                             sampler=test_sampler,
-                            batch_size=args.per_device_eval_batch_size)
+                            batch_size=args.per_device_eval_batch_size,
+                            num_workers=4,
+                            pin_memory=True
+                            )
         train_task_list[dataset] = train_dataloader
         eval_task_list[dataset] = eval_dataloader
         test_task_list[dataset] = test_dataloader

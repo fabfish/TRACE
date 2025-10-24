@@ -17,32 +17,33 @@ GRAD_CKPT="--gradient_checkpointing"
 
 # --- Offload 配置 (按需启用) ---
 # 如果上面的配置仍然OOM，取消下面一行的注释
-OFFLOAD_FLAG="--offload"
+# OFFLOAD_FLAG="--offload"
 
 # mkdir /data/yuzhiyuan/outputs_LLM-CL/qwen_full/cl/$cl_method
 # mk all the parent directories if not exist
 
-mkdir -p /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD
+mkdir -p /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/grouped_4of8
 
 deepspeed --include=localhost:0,1,2,3,4,5,6,7 --master_port $port training/main.py \
     --data_path /data/datasets/TRACE-Benchmark/LLM-CL-Benchmark_500 \
     --dataset_name $DATASET_LIST \
     --model_name_or_path $MODEL_PATH \
-    --per_device_train_batch_size 16 \
+    --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 16 \
     --max_prompt_len $MAX_LEN \
     --max_ans_len 512 \
     --learning_rate 1e-5 \
     --weight_decay 0. \
     --num_train_epochs $EPOCH_LIST \
-    --gradient_accumulation_steps 1 \
+    --gradient_accumulation_steps 8 \
     $GRAD_CKPT \
     $OFFLOAD_FLAG \
     --lr_scheduler_type cosine \
     --num_warmup_steps 0 \
     --seed 1234 \
-    --zero_stage 1 \
+    --zero_stage 0 \
     --deepspeed \
     --print_loss \
     --CL_method $CL_METHOD \
-    --output_dir /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD 2>&1 | tee /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/train.log &
+    --upcycle-interval 4 \
+    --output_dir /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/grouped_4of8 2>&1 | tee /data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/$CL_METHOD/grouped_4of8/train.log &

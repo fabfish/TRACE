@@ -155,6 +155,15 @@ def parse_args():
                         default=2,
                         help="Number of activated experts per token.")
 
+    # 与 training 相同的 Upcycle 控制接口（仅用于推理时模型构建/转换）
+    parser.add_argument('--upcycle-interval',
+                        type=int,
+                        default=4,
+                        help="Number of tasks between upcycles when converting model for inference (default 4).")
+    parser.add_argument('--upcycle-task-names',
+                        type=str,
+                        default='',
+                        help='Comma-separated dataset names where upcycle should be forced during inference (e.g. "ScienceQA,Py150").')
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
@@ -328,34 +337,88 @@ def main():
                         params.requires_grad=False
 
         if args.CL_method == "upcycle":
-            args.num_experts_per_task = 8 # A common setting, or get from args
-            args.num_activated_experts = 2 # A common setting, or get from args
+            # 保留可由命令行覆盖的默认值
+            args.num_experts_per_task = getattr(args, "num_experts_per_task", 8)
+            args.num_activated_experts = getattr(args, "num_activated_experts", 2)
 
-            # 记录时间
+            # 决定本轮是否进行 upcycle：按间隔或显式任务名触发
+            current_task_name = inference_tasks[round] if round < len(inference_tasks) else None
+            raw_names = getattr(args, "upcycle_task_names", "")
+            if isinstance(raw_names, str):
+                upcycle_names = {n.strip() for n in raw_names.split(",") if n.strip()}
+            else:
+                upcycle_names = set(raw_names or [])
+
+            do_upcycle = False
+            if args.upcycle_interval and (round % max(1, args.upcycle_interval) == 0):
+                do_upcycle = True
+            if current_task_name in upcycle_names:
+                do_upcycle = True
+
+            print_rank_0(f"[Infer][Upcycle] round={round} task={current_task_name} do_upcycle={do_upcycle}", args.local_rank)
+
             import time
-            start_time = time.time()
-            model = convert_upcycle_model(model, args, num_tasks=round + 1)
-            end_time = time.time()
-            print(f"Time taken to convert model with Upcycling: {end_time - start_time} seconds")
-            
-            start_time = time.time()
-            # Load the full model state, including new experts
-            state_dict = torch.load(os.path.join(inference_model_path, "pytorch_model.bin"), map_location='cpu')
-            end_time = time.time()
-            print(f"Time taken to load state dict from disk: {end_time - start_time} seconds")
+            t0 = time.time()
 
-            start_time = time.time()
-            print_rank_0(f"Loading state dict keys...", args.local_rank)
-            model.load_state_dict(state_dict)
-            end_time = time.time()
-            print(f"Time taken to load state dict into model: {end_time - start_time} seconds")
-            
-            start_time = time.time()
-            model = model.to(device)
-            end_time = time.time()
-            print(f"Time taken to move model to device: {end_time - start_time} seconds")
-            del state_dict
+            # 先从磁盘读取 checkpoint（cpu）以便检查 router 的输出维度
+            ckpt_path = os.path.join(inference_model_path, "pytorch_model.bin")
+            if os.path.isfile(ckpt_path):
+                t_ck0 = time.time()
+                state_dict = torch.load(ckpt_path, map_location="cpu")
+                t_ck1 = time.time()
+                print_rank_0(f"Time taken to load state dict from disk: {t_ck1 - t_ck0} seconds", args.local_rank)
 
+                # 查找第一个 router.classifier.weight 的 output dim（若存在）
+                router_out_dim = None
+                for k, v in state_dict.items():
+                    if k.endswith(".mlp.router.classifier.weight"):
+                        try:
+                            router_out_dim = v.shape[0]
+                            break
+                        except Exception:
+                            continue
+
+                if router_out_dim is not None:
+                    # 根据 checkpoint router 输出维度，计算需要的总任务数（向上取整）
+                    per_task = int(getattr(args, "num_experts_per_task", 8))
+                    num_tasks_needed = math.ceil(router_out_dim / per_task)
+                    print_rank_0(f"[Infer][Upcycle] checkpoint router_out_dim={router_out_dim}, constructing model with num_tasks={num_tasks_needed} (per_task={per_task})", args.local_rank)
+
+                    # 构建与 checkpoint 对齐的 MoE 结构（非增量重建，保证维度一致）
+                    model = convert_upcycle_model(model, args, num_tasks=num_tasks_needed, incremental=False)
+                else:
+                    # 如果 checkpoint 中找不到 router 信息：按需选择增量或跳过重建
+                    if do_upcycle:
+                        model = convert_upcycle_model(model, args, num_tasks=1, incremental=True)
+                    else:
+                        # 不扩张，也不读取 router 信息，保持原始模型结构
+                        pass
+
+                t1 = time.time()
+                print_rank_0(f"Time taken to convert model with Upcycling: {t1 - t0} seconds", args.local_rank)
+
+                # 现在加载权重：先尝试严格加载（模型结构应与 checkpoint 匹配），若失败再降级为 strict=False
+                t2 = time.time()
+                print_rank_0(f"Loading state dict into model...", args.local_rank)
+                try:
+                    model.load_state_dict(state_dict, strict=True)
+                    print_rank_0("Loaded checkpoint with strict=True", args.local_rank)
+                except Exception as e_strict:
+                    print_rank_0(f"strict=True failed: {e_strict}. Retrying with strict=False.", args.local_rank)
+                    model.load_state_dict(state_dict, strict=False)
+                    print_rank_0("Loaded checkpoint with strict=False", args.local_rank)
+                t3 = time.time()
+                print_rank_0(f"Time taken to load state dict into model: {t3 - t2} seconds", args.local_rank)
+
+                # 释放临时 state_dict
+                del state_dict
+
+            else:
+                print_rank_0(f"[Infer][Upcycle] checkpoint not found at {ckpt_path}. Falling back to conversion only.", args.local_rank)
+                if do_upcycle:
+                    model = convert_upcycle_model(model, args, num_tasks=1, incremental=True)
+                t1 = time.time()
+                print_rank_0(f"Time taken to convert model with Upcycling (no ckpt): {t1 - t0} seconds", args.local_rank)
 
         if args.CL_method == "lora":
             from peft import PeftModel
