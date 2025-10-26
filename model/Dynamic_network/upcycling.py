@@ -131,7 +131,9 @@ def convert_upcycle_model(model, args, num_tasks=0, incremental=False):
 
         for li, layer in enumerate(model.model.layers):
             if li % 2 != 0:
-                continue
+                # continue
+                pass
+                
 
             mlp = layer.mlp
             # Ensure existing MoE structures present; if not, initialize as base
@@ -189,7 +191,9 @@ def convert_upcycle_model(model, args, num_tasks=0, incremental=False):
 
     for li, layer in enumerate(model.model.layers):
         if li % 2 != 0:
-            continue
+            
+            # continue
+            pass
         print_rank_0(f" Converting layer {li} to MoE layer.", getattr(args, 'global_rank', 0))
 
         mlp = layer.mlp
@@ -270,6 +274,7 @@ class Upcycle(CL_Base_Model):
         """
         for i, layer in enumerate(self.model.model.layers):
             if i % 2 == 0:
+                print(f" Prepare layer {i} to MoE layer. ")
                 mlp = layer.mlp
                 
                 # Store original FFN forward method
@@ -349,7 +354,7 @@ class Upcycle(CL_Base_Model):
 
             for i, layer in enumerate(self.model.model.layers):
                 if i % 2 != 0:
-                    continue
+                    # continue
                     pass
                 else:
                     print(f" Converting layer {i} to MoE layer.")
@@ -384,7 +389,7 @@ class Upcycle(CL_Base_Model):
         # for layer in self.model.model.layers:
         for i, layer in enumerate(self.model.model.layers):
             if i % 2 != 0:
-                continue
+                # continue
                 pass
             else:
                 print(f" Appending experts to layer {i}.")
@@ -517,7 +522,7 @@ class Upcycle(CL_Base_Model):
         # for layer in self.model.model.layers:
         for i, layer in enumerate(self.model.model.layers):
             if i % 2 != 0:
-                continue
+                # continue
                 pass
 
             for expert_idx in expert_range_to_train:
