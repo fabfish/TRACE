@@ -16,6 +16,7 @@ import PIL.Image
 file_paths = {
     "1L": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/newnew/predictions_single/evaluation_matrix.xlsx",
     "1L_G": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/grouped_1/evaluation_matrix.xlsx",
+    "1L_G6": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/grouped_1_6tasks_new/evaluation_matrix.xlsx",
     "2L": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/even_new_stable/predictions_single/evaluation_matrix.xlsx",
     "2L_G": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/grouped_2/evaluation_matrix.xlsx",
     "Full_2L": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/even_full/predictions_single/evaluation_matrix.xlsx",
@@ -39,6 +40,7 @@ TASK_ORDER = ["C-STANCE", "FOMC", "MeetingBank", "Py150", "ScienceQA", "NumGLUE-
 METHOD_COLORS = {
     "1L": "#FF6666",       # 浅红
     "1L_G": "#FF9999",     # 更浅红
+    "1L_G6": "#FFCCCC",     # (为1L_G6添加一个颜色，尽管它可能不显示)
     "2L": "#FFB266",       # 橙
     "2L_G": "#FFD966",     # 浅橙
     "Full_2L": "#FFFF66",  # 黄
@@ -51,6 +53,7 @@ METHOD_COLORS = {
 METHOD_FONT_COLORS = {
     "1L": "#D00000",       # 深红
     "1L_G": "#B30000",     # 更深红
+    "1L_G6": "#800000",    # 栗色
     "2L": "#E67E00",       # 深橙
     "2L_G": "#C08B00",     # 赭黄
     "Full_2L": "#808000",  # 橄榄
@@ -356,7 +359,11 @@ def export_to_image(df, output_path):
                 row_data[task] = "\n".join(cell_lines)
                 row_numeric_data[task] = numeric_val 
 
-            if has_data_for_this_method:
+            # ⬇️⬇️⬇️ ******** 这是唯一的修改点 ******** ⬇️⬇️⬇️
+            # 即使'1L_G6'没有数据(has_data_for_this_method=False)，
+            # 也要强制添加空行，以确保对齐。
+            if has_data_for_this_method or method == '1L_G6':
+            # ⬆️⬆️⬆️ ******** 这是唯一的修改点 ******** ⬆️⬆️⬆️
                 index_tuples.append((f"Epoch {checkpoint}", method))
                 data_rows.append(row_data)
                 numeric_rows.append(row_numeric_data) 
@@ -405,25 +412,39 @@ def export_to_image(df, output_path):
     # 导出图例
     dfi.export(legend_styler, buf_legend, max_rows=-1, max_cols=-1, table_conversion='matplotlib', dpi=150)
     
-    # 导出两栏图片
-    dfi.export(styler_col1, buf_col1, max_rows=-1, max_cols=-1, table_conversion='matplotlib', dpi=150)
-    dfi.export(styler_col2, buf_col2, max_rows=-1, max_cols=-1, table_conversion='matplotlib', dpi=150)
-    
-    buf_legend.seek(0)
-    buf_col1.seek(0)
-    buf_col2.seek(0)
-    
-    img_legend = PIL.Image.open(buf_legend)
-    img_col1 = PIL.Image.open(buf_col1)
-    img_col2 = PIL.Image.open(buf_col2)
+    # 导出两栏图片 (增加非空检查)
+    if not df_display_col1.empty:
+        dfi.export(styler_col1, buf_col1, max_rows=-1, max_cols=-1, table_conversion='matplotlib', dpi=150)
+        buf_col1.seek(0)
+        img_col1 = PIL.Image.open(buf_col1)
+    else:
+        img_col1 = PIL.Image.new('RGB', (1,1), (255, 255, 255)) # 创建一个1x1的空白图像
 
+    if not df_display_col2.empty:
+        dfi.export(styler_col2, buf_col2, max_rows=-1, max_cols=-1, table_conversion='matplotlib', dpi=150)
+        buf_col2.seek(0)
+        img_col2 = PIL.Image.open(buf_col2)
+    else:
+        img_col2 = PIL.Image.new('RGB', (1,1), (255, 255, 255)) # 创建一个1x1的空白图像
+
+    buf_legend.seek(0)
+    img_legend = PIL.Image.open(buf_legend)
+    
     # 计算总宽度和高度
     # 留一些边距
     H_PAD = 30 # 水平分隔符宽度
     V_PAD = 10 # 垂直分隔符宽度
 
     max_col_height = max(img_col1.height, img_col2.height)
-    total_width = img_col1.width + H_PAD + img_col2.width
+    
+    # 修正：如果某列为空，宽度设为0
+    width_col1 = img_col1.width if not df_display_col1.empty else 0
+    width_col2 = img_col2.width if not df_display_col2.empty else 0
+    pad_between_cols = H_PAD if (width_col1 > 1 and width_col2 > 1) else 0
+
+    total_width = width_col1 + pad_between_cols + width_col2
+    if total_width <= 1: total_width = img_legend.width # 保证最小宽度
+        
     total_height = img_legend.height + V_PAD + max_col_height
 
     new_img = PIL.Image.new('RGB', (total_width, total_height), (255, 255, 255))
@@ -432,8 +453,10 @@ def export_to_image(df, output_path):
     new_img.paste(img_legend, (0, 0)) # 图例放在顶部左侧
     
     # 粘贴两栏
-    new_img.paste(img_col1, (0, img_legend.height + V_PAD))
-    new_img.paste(img_col2, (img_col1.width + H_PAD, img_legend.height + V_PAD)) 
+    if not df_display_col1.empty:
+        new_img.paste(img_col1, (0, img_legend.height + V_PAD))
+    if not df_display_col2.empty:
+        new_img.paste(img_col2, (width_col1 + pad_between_cols, img_legend.height + V_PAD)) 
     
     new_img.save(output_path)
     print(f"\n✅ 图片已成功导出到: {output_path}")
