@@ -65,36 +65,54 @@ class Router(nn.Module):
 
 def moe_forward(self, x):
     """
-    New forward pass for the MLP layer, turning it into an MoE layer.
+    Optimized MoE forward pass using batched expert computation.
     This function will be monkey-patched into each LlamaMLP instance.
     `self` refers to the LlamaMLP layer instance.
     """
     # 1. Shared Expert (Original FFN)
-    # print("x is", x)
     shared_expert_output = self.original_forward(x)
 
-    # 2. Scientific Experts
+    # 2. Scientific Experts (batched implementation for better GPU utilization)
     if len(self.scientific_experts) > 0:
+        batch_size, seq_len, hidden_dim = x.shape
+        num_tokens = batch_size * seq_len
+        
         routing_weights, selected_experts = self.router(x)
-        final_expert_output = torch.zeros_like(shared_expert_output)
+        # routing_weights: [num_tokens, top_k], selected_experts: [num_tokens, top_k]
         
-        # Flatten input for expert processing
-        flat_x = x.view(-1, x.shape[-1])
+        flat_x = x.view(num_tokens, hidden_dim)
         
-        # Get flattened routing info
-        flat_routing_weights = routing_weights.view(-1, routing_weights.shape[-1])
-        flat_selected_experts = selected_experts.view(-1, selected_experts.shape[-1])
-
-        # Iterate over each token and its selected experts
-        for i in range(flat_x.shape[0]):
-            token_output = 0
-            for j in range(self.router.top_k):
-                expert_idx = flat_selected_experts[i, j].item()
-                expert_layer = self.scientific_experts[expert_idx]
-                weight = flat_routing_weights[i, j]
-                token_output += weight * expert_layer(flat_x[i].unsqueeze(0))
-            final_expert_output.view(-1, x.shape[-1])[i] = token_output
+        # Initialize output
+        final_expert_output = torch.zeros(num_tokens, hidden_dim, device=x.device, dtype=x.dtype)
+        
+        # Batch process by expert to avoid Python loops over tokens
+        num_experts = len(self.scientific_experts)
+        for expert_idx in range(num_experts):
+            # Find all (token, slot) pairs routed to this expert
+            expert_mask = (selected_experts == expert_idx)  # [num_tokens, top_k]
             
+            if not expert_mask.any():
+                continue
+            
+            # Get token indices that use this expert (in any slot)
+            token_indices = expert_mask.any(dim=-1).nonzero(as_tuple=True)[0]
+            
+            if len(token_indices) == 0:
+                continue
+            
+            # Get the tokens for this expert
+            expert_input = flat_x[token_indices]  # [num_selected, hidden_dim]
+            
+            # Compute expert output
+            expert_output = self.scientific_experts[expert_idx](expert_input)  # [num_selected, hidden_dim]
+            
+            # Get weights for these tokens (sum across slots where this expert is selected)
+            token_weights = (routing_weights[token_indices] * expert_mask[token_indices].float()).sum(dim=-1, keepdim=True)
+            
+            # Accumulate weighted output
+            final_expert_output[token_indices] += token_weights * expert_output
+        
+        final_expert_output = final_expert_output.view(batch_size, seq_len, hidden_dim)
         return shared_expert_output + final_expert_output
     else:
         return shared_expert_output
@@ -265,6 +283,9 @@ class Upcycle(CL_Base_Model):
 
         if not hasattr(self.args, 'device'):
             self.args.device = torch.device("npu")
+        
+        # Get model dtype for consistency when creating new modules
+        self.model_dtype = next(self.model.parameters()).dtype
 
 
     def _prepare_model_for_upcycling(self):
@@ -374,12 +395,11 @@ class Upcycle(CL_Base_Model):
                 # Add MoE components
                 mlp.scientific_experts = nn.ModuleList([])
                 self.model.model.config.num_activated_experts = self.num_activated_experts
-                # mlp.router = Router(self.model.model.config)
-                mlp.router = Router(self.model.model.config, 0)
+                # Create router with correct device and dtype
+                mlp.router = Router(self.model.model.config, 0).to(device=self.args.device, dtype=self.model_dtype)
                 
                 # Monkey-patch the forward method
                 layer.mlp.forward = types.MethodType(moe_forward, layer.mlp)
-                # layer.mlp.forward = moe_forward
                 print_rank_0(f"Patched forward method for layer {i}", self.args.global_rank)
 
         start_expert_idx = total_experts_before
@@ -412,19 +432,14 @@ class Upcycle(CL_Base_Model):
 
             # Create and initialize new experts for the current task
             for i in range(self.num_experts_per_task):
-                new_expert = Expert(self.model.model.config, new_intermediate_size).to(self.args.device)
+                new_expert = Expert(self.model.model.config, new_intermediate_size).to(device=self.args.device, dtype=self.model_dtype)
                 
                 # Split weights and initialize ("Scientific Expert Split")
                 start_col = i * new_intermediate_size
                 end_col = (i + 1) * new_intermediate_size
                 
-                # new_expert.gate_proj.weight.data = W_g[:, start_col:end_col].clone()
-                # new_expert.up_proj.weight.data = W_u[:, start_col:end_col].clone()
-                # new_expert.down_proj.weight.data = W_d[start_col:end_col, :].clone()
-
                 # Linear(in, out) -> weight shape [out, in]
                 # gate_proj: [H, h], up_proj: [H, h], down_proj: [h, H]
-                # 你要切的是 out 维度（第0维），不是 in 维度（第1维）
                 new_expert.gate_proj.weight.data = W_g[start_col:end_col, :].clone()
                 new_expert.up_proj.weight.data = W_u[start_col:end_col, :].clone()
                 new_expert.down_proj.weight.data = W_d[:, start_col:end_col].clone()
@@ -433,9 +448,10 @@ class Upcycle(CL_Base_Model):
             
             # Expand the router's classifier layer
             num_total_experts = len(mlp.scientific_experts)
-            new_router_classifier = nn.Linear(h, num_total_experts, device=self.args.device)
+            new_router_classifier = nn.Linear(h, num_total_experts, device=self.args.device, dtype=self.model_dtype)
             # Copy old weights
-            new_router_classifier.weight.data[:total_experts_before, :] = mlp.router.classifier.weight.data
+            if total_experts_before > 0:
+                new_router_classifier.weight.data[:total_experts_before, :] = mlp.router.classifier.weight.data
             # Keep new weights at default initialization
             mlp.router.classifier = new_router_classifier
 
