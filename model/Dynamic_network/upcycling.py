@@ -72,7 +72,7 @@ def moe_forward(self, x):
     # 1. Shared Expert (Original FFN)
     shared_expert_output = self.original_forward(x)
 
-    # 2. Scientific Experts (batched implementation)
+    # 2. Scientific Experts (batched implementation for better GPU utilization)
     if len(self.scientific_experts) > 0:
         # Handle both 2D (num_tokens, hidden_dim) and 3D (batch_size, seq_len, hidden_dim) inputs
         input_was_2d = x.dim() == 2
@@ -85,15 +85,15 @@ def moe_forward(self, x):
             batch_size, seq_len, hidden_dim = x.shape
             num_tokens = batch_size * seq_len
             x_3d = x
-        
+
         routing_weights, selected_experts = self.router(x_3d)
         # routing_weights: [num_tokens, top_k], selected_experts: [num_tokens, top_k]
-        
+
         flat_x = x_3d.view(num_tokens, hidden_dim)
-        
+
         # Initialize output
         final_expert_output = torch.zeros(num_tokens, hidden_dim, device=x.device, dtype=x.dtype)
-        
+
         # Batch process by expert to avoid Python loops over tokens
         num_experts = len(self.scientific_experts)
         for expert_idx in range(num_experts):
@@ -112,10 +112,10 @@ def moe_forward(self, x):
             
             # Get the tokens for this expert
             expert_input = flat_x[token_indices]  # [num_selected, hidden_dim]
-            
+
             # Compute expert output
             expert_output = self.scientific_experts[expert_idx](expert_input)  # [num_selected, hidden_dim]
-            
+
             # Get weights for these tokens (sum across slots where this expert is selected)
             token_weights = (routing_weights[token_indices] * expert_mask[token_indices].float()).sum(dim=-1, keepdim=True)
             
@@ -131,7 +131,7 @@ def moe_forward(self, x):
                 shared_expert_output = shared_expert_output.squeeze(0)
         else:
             final_expert_output = final_expert_output.view(batch_size, seq_len, hidden_dim)
-        
+
         return shared_expert_output + final_expert_output
     else:
         return shared_expert_output
@@ -305,6 +305,8 @@ class Upcycle(CL_Base_Model):
         
         # Separate optimizer for dynamically added experts (DeepSpeed ZeRO doesn't track them)
         self.expert_optimizer = None
+        # Get model dtype for consistency when creating new modules
+        self.model_dtype = next(self.model.parameters()).dtype
 
 
     def _prepare_model_for_upcycling(self):
@@ -414,12 +416,11 @@ class Upcycle(CL_Base_Model):
                 # Add MoE components
                 mlp.scientific_experts = nn.ModuleList([])
                 self.model.model.config.num_activated_experts = self.num_activated_experts
-                # mlp.router = Router(self.model.model.config)
-                mlp.router = Router(self.model.model.config, 0)
+                # Create router with correct device and dtype
+                mlp.router = Router(self.model.model.config, 0).to(device=self.args.device, dtype=self.model_dtype)
                 
                 # Monkey-patch the forward method
                 layer.mlp.forward = types.MethodType(moe_forward, layer.mlp)
-                # layer.mlp.forward = moe_forward
                 print_rank_0(f"Patched forward method for layer {i}", self.args.global_rank)
 
         start_expert_idx = total_experts_before
@@ -452,19 +453,14 @@ class Upcycle(CL_Base_Model):
 
             # Create and initialize new experts for the current task
             for i in range(self.num_experts_per_task):
-                new_expert = Expert(self.model.model.config, new_intermediate_size).to(self.args.device)
+                new_expert = Expert(self.model.model.config, new_intermediate_size).to(device=self.args.device, dtype=self.model_dtype)
                 
                 # Split weights and initialize ("Scientific Expert Split")
                 start_col = i * new_intermediate_size
                 end_col = (i + 1) * new_intermediate_size
                 
-                # new_expert.gate_proj.weight.data = W_g[:, start_col:end_col].clone()
-                # new_expert.up_proj.weight.data = W_u[:, start_col:end_col].clone()
-                # new_expert.down_proj.weight.data = W_d[start_col:end_col, :].clone()
-
                 # Linear(in, out) -> weight shape [out, in]
                 # gate_proj: [H, h], up_proj: [H, h], down_proj: [h, H]
-                # 你要切的是 out 维度（第0维），不是 in 维度（第1维）
                 new_expert.gate_proj.weight.data = W_g[start_col:end_col, :].clone()
                 new_expert.up_proj.weight.data = W_u[start_col:end_col, :].clone()
                 new_expert.down_proj.weight.data = W_d[:, start_col:end_col].clone()
@@ -473,9 +469,10 @@ class Upcycle(CL_Base_Model):
             
             # Expand the router's classifier layer
             num_total_experts = len(mlp.scientific_experts)
-            new_router_classifier = nn.Linear(h, num_total_experts, device=self.args.device)
+            new_router_classifier = nn.Linear(h, num_total_experts, device=self.args.device, dtype=self.model_dtype)
             # Copy old weights
-            new_router_classifier.weight.data[:total_experts_before, :] = mlp.router.classifier.weight.data
+            if total_experts_before > 0:
+                new_router_classifier.weight.data[:total_experts_before, :] = mlp.router.classifier.weight.data
             # Keep new weights at default initialization
             mlp.router.classifier = new_router_classifier
 
