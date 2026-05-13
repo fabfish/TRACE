@@ -16,6 +16,7 @@ import PIL.Image
 file_paths = {
     "1L": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/newnew/predictions_single/evaluation_matrix.xlsx",
     "1L_G": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/grouped_1/evaluation_matrix.xlsx",
+    "Full_1L_G": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/groupedsftt_perlayer_full/predictions_single/evaluation_matrix.xlsx",
     "2L": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/even_new_stable/predictions_single/evaluation_matrix.xlsx",
     "2L_G": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/grouped_2/evaluation_matrix.xlsx",
     "Full_2L": "/data/yuzhiyuan/outputs_LLM-CL/Llama-3.2-1B-Instruct/cl/upcycle/even_full/predictions_single/evaluation_matrix.xlsx",

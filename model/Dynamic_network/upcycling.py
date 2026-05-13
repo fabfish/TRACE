@@ -65,36 +65,73 @@ class Router(nn.Module):
 
 def moe_forward(self, x):
     """
-    New forward pass for the MLP layer, turning it into an MoE layer.
+    Optimized MoE forward pass using batched expert computation.
     This function will be monkey-patched into each LlamaMLP instance.
     `self` refers to the LlamaMLP layer instance.
     """
     # 1. Shared Expert (Original FFN)
-    # print("x is", x)
     shared_expert_output = self.original_forward(x)
 
-    # 2. Scientific Experts
+    # 2. Scientific Experts (batched implementation)
     if len(self.scientific_experts) > 0:
-        routing_weights, selected_experts = self.router(x)
-        final_expert_output = torch.zeros_like(shared_expert_output)
+        # Handle both 2D (num_tokens, hidden_dim) and 3D (batch_size, seq_len, hidden_dim) inputs
+        input_was_2d = x.dim() == 2
+        if input_was_2d:
+            # 2D input: (num_tokens, hidden_dim) -> add batch dimension
+            num_tokens, hidden_dim = x.shape
+            batch_size, seq_len = 1, num_tokens
+            x_3d = x.unsqueeze(0)  # (1, num_tokens, hidden_dim)
+        else:
+            batch_size, seq_len, hidden_dim = x.shape
+            num_tokens = batch_size * seq_len
+            x_3d = x
         
-        # Flatten input for expert processing
-        flat_x = x.view(-1, x.shape[-1])
+        routing_weights, selected_experts = self.router(x_3d)
+        # routing_weights: [num_tokens, top_k], selected_experts: [num_tokens, top_k]
         
-        # Get flattened routing info
-        flat_routing_weights = routing_weights.view(-1, routing_weights.shape[-1])
-        flat_selected_experts = selected_experts.view(-1, selected_experts.shape[-1])
-
-        # Iterate over each token and its selected experts
-        for i in range(flat_x.shape[0]):
-            token_output = 0
-            for j in range(self.router.top_k):
-                expert_idx = flat_selected_experts[i, j].item()
-                expert_layer = self.scientific_experts[expert_idx]
-                weight = flat_routing_weights[i, j]
-                token_output += weight * expert_layer(flat_x[i].unsqueeze(0))
-            final_expert_output.view(-1, x.shape[-1])[i] = token_output
+        flat_x = x_3d.view(num_tokens, hidden_dim)
+        
+        # Initialize output
+        final_expert_output = torch.zeros(num_tokens, hidden_dim, device=x.device, dtype=x.dtype)
+        
+        # Batch process by expert to avoid Python loops over tokens
+        num_experts = len(self.scientific_experts)
+        for expert_idx in range(num_experts):
+            # Find all (token, slot) pairs routed to this expert
+            # selected_experts: [num_tokens, top_k]
+            expert_mask = (selected_experts == expert_idx)  # [num_tokens, top_k]
             
+            if not expert_mask.any():
+                continue
+            
+            # Get token indices that use this expert (in any slot)
+            token_indices = expert_mask.any(dim=-1).nonzero(as_tuple=True)[0]
+            
+            if len(token_indices) == 0:
+                continue
+            
+            # Get the tokens for this expert
+            expert_input = flat_x[token_indices]  # [num_selected, hidden_dim]
+            
+            # Compute expert output
+            expert_output = self.scientific_experts[expert_idx](expert_input)  # [num_selected, hidden_dim]
+            
+            # Get weights for these tokens (sum across slots where this expert is selected)
+            token_weights = (routing_weights[token_indices] * expert_mask[token_indices].float()).sum(dim=-1, keepdim=True)
+            
+            # Accumulate weighted output
+            final_expert_output[token_indices] += token_weights * expert_output
+        
+        # Reshape output: if input was 2D, remove batch dimension
+        if input_was_2d:
+            # This was originally 2D input, remove the added batch dimension
+            final_expert_output = final_expert_output.view(num_tokens, hidden_dim)
+            # shared_expert_output also needs to be 2D
+            if shared_expert_output.dim() == 3:
+                shared_expert_output = shared_expert_output.squeeze(0)
+        else:
+            final_expert_output = final_expert_output.view(batch_size, seq_len, hidden_dim)
+        
         return shared_expert_output + final_expert_output
     else:
         return shared_expert_output
@@ -265,6 +302,9 @@ class Upcycle(CL_Base_Model):
 
         if not hasattr(self.args, 'device'):
             self.args.device = torch.device("npu")
+        
+        # Separate optimizer for dynamically added experts (DeepSpeed ZeRO doesn't track them)
+        self.expert_optimizer = None
 
 
     def _prepare_model_for_upcycling(self):
@@ -440,6 +480,10 @@ class Upcycle(CL_Base_Model):
             mlp.router.classifier = new_router_classifier
 
         print_rank_0(f"Added {self.num_experts_per_task} new experts. Total experts per layer: {len(self.model.model.layers[0].mlp.scientific_experts)}", self.args.global_rank)
+        
+        # Create a separate optimizer for new expert parameters
+        # DeepSpeed ZeRO doesn't track dynamically added parameters
+        self._create_expert_optimizer(i_task)
 
 
     # def freeze_non_current_task_params(self, i_task):
@@ -492,6 +536,51 @@ class Upcycle(CL_Base_Model):
     #         # # Make sure the router layer itself is trainable
     #         # for param in layer.mlp.router.classifier.parameters():
     #         #     param.requires_grad = True
+
+    def _create_expert_optimizer(self, i_task):
+        """
+        Create a separate optimizer for newly added expert parameters.
+        
+        DeepSpeed ZeRO only manages parameters present during initialization.
+        New experts need their own optimizer for gradient updates.
+        """
+        if i_task not in self.task2expert_range:
+            return
+        
+        expert_range = self.task2expert_range[i_task]
+        new_params = []
+        
+        for layer in self.model.model.layers:
+            mlp = layer.mlp
+            if hasattr(mlp, 'scientific_experts'):
+                for expert_idx in expert_range:
+                    if expert_idx < len(mlp.scientific_experts):
+                        for param in mlp.scientific_experts[expert_idx].parameters():
+                            new_params.append(param)
+                
+                # Also include router parameters
+                if hasattr(mlp, 'router') and hasattr(mlp.router, 'classifier'):
+                    for param in mlp.router.classifier.parameters():
+                        new_params.append(param)
+        
+        if not new_params:
+            print_rank_0(f"[Warning] No new parameters found for task {i_task}", self.args.global_rank)
+            self.expert_optimizer = None
+            return
+        
+        # Get learning rate from DeepSpeed config or use default
+        lr = self.args.learning_rate if hasattr(self.args, 'learning_rate') else 1e-5
+        
+        # Create AdamW optimizer for new parameters
+        self.expert_optimizer = torch.optim.AdamW(
+            new_params, 
+            lr=float(lr),
+            weight_decay=0.0,
+            betas=(0.9, 0.95)
+        )
+        
+        print_rank_0(f"[Expert Optimizer] Created optimizer for {len(new_params)} new parameters (lr={lr})", 
+                    self.args.global_rank)
 
     def freeze_non_current_task_params(self, i_task):
         """
@@ -563,6 +652,11 @@ class Upcycle(CL_Base_Model):
                 
                 self.model.backward(loss)
                 self.model.step()
+                
+                # Step the expert optimizer for dynamically added parameters
+                if hasattr(self, 'expert_optimizer') and self.expert_optimizer is not None:
+                    self.expert_optimizer.step()
+                    self.expert_optimizer.zero_grad()
                 
     def evaluate(self, round, infer_task_id, task):
         self.evaluate_one_task(round, infer_task_id, task)
